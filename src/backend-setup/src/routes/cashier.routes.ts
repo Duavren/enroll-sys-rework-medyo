@@ -14,4 +14,12 @@ router.get('/installment-payments', authenticate, authorize('cashier', 'registra
 router.put('/installment-payments/:paymentId/approve', authenticate, authorize('cashier', 'registrar', 'superadmin'), cashier.approveInstallmentPayment);
 router.put('/installment-payments/:paymentId/reject', authenticate, authorize('cashier', 'registrar', 'superadmin'), cashier.rejectInstallmentPayment);
 
+// Enrollment Review (Cashier reviews fees before Dean)
+router.get('/enrollment-reviews', authenticate, authorize('cashier', 'registrar', 'superadmin', 'admin'), cashier.listEnrollmentsForReview);
+router.put('/enrollment-reviews/:id/update-fees', authenticate, authorize('cashier', 'superadmin'), cashier.updateEnrollmentFees);
+router.put('/enrollment-reviews/:id/approve', authenticate, authorize('cashier', 'registrar', 'superadmin'), cashier.approveEnrollmentReview);
+router.put('/enrollment-reviews/:id/reject', authenticate, authorize('cashier', 'registrar', 'superadmin'), cashier.rejectEnrollmentReview);
+
+export default router;
+
 export default router;

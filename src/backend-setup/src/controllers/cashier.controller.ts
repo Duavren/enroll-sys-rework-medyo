@@ -425,4 +425,173 @@ export const rejectInstallmentPayment = async (req: AuthRequest, res: Response) 
   }
 };
 
-export default { listPendingTransactions, listTransactions, processTransaction, cashierReport, listTuitionAssessments, approveTuitionAssessment, listInstallmentPayments, approveInstallmentPayment, rejectInstallmentPayment };
+// ========== Enrollment Review (Cashier reviews fees before Dean) ==========
+
+// List enrollments pending cashier review (status = 'Cashier Review')
+export const listEnrollmentsForReview = async (req: AuthRequest, res: Response) => {
+  try {
+    const rows = await query(
+      `SELECT e.*, 
+        s.student_id, s.first_name || ' ' || s.last_name as student_name,
+        s.course, s.year_level,
+        (SELECT COUNT(*) FROM enrollment_subjects es WHERE es.enrollment_id = e.id) as subject_count
+       FROM enrollments e
+       JOIN students s ON e.student_id = s.id
+       WHERE e.status = 'Cashier Review'
+       ORDER BY e.updated_at DESC`
+    );
+    res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('List enrollments for cashier review error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Cashier updates fees only (without changing status)
+export const updateEnrollmentFees = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { tuition, registration, library, lab, id_fee, others } = req.body;
+    const userId = req.user?.id;
+
+    const enrollments = await query('SELECT * FROM enrollments WHERE id = ?', [id]);
+    if (enrollments.length === 0) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    if (enrollments[0].status !== 'Cashier Review') {
+      return res.status(400).json({ success: false, message: 'Enrollment is not in Cashier Review status' });
+    }
+
+    // Calculate total with updated fees
+    const t = tuition ?? enrollments[0].tuition ?? 0;
+    const r = registration ?? enrollments[0].registration ?? 0;
+    const l = library ?? enrollments[0].library ?? 0;
+    const lb = lab ?? enrollments[0].lab ?? 0;
+    const i = id_fee ?? enrollments[0].id_fee ?? 0;
+    const o = others ?? enrollments[0].others ?? 0;
+    const totalAmount = t + r + l + lb + i + o;
+
+    // Update fees only, keep status as 'Cashier Review'
+    await run(
+      `UPDATE enrollments SET 
+        tuition = ?,
+        registration = ?,
+        library = ?,
+        lab = ?,
+        id_fee = ?,
+        others = ?,
+        total_amount = ?,
+        updated_at = datetime('now')
+       WHERE id = ?`,
+      [t, r, l, lb, i, o, totalAmount, id]
+    );
+
+    // Log activity
+    await run(
+      'INSERT INTO activity_logs (user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?)',
+      [userId, 'CASHIER_UPDATE_FEES', 'enrollment', id, `Cashier updated fees to ₱${totalAmount.toFixed(2)}`]
+    );
+
+    res.json({ success: true, message: 'Enrollment fees updated successfully.' });
+  } catch (error) {
+    console.error('Update enrollment fees error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Cashier approves enrollment review (optionally edits fees) -> forwards to Dean
+export const approveEnrollmentReview = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { tuition, registration, library, lab, id_fee, others, remarks } = req.body;
+    const userId = req.user?.id;
+
+    const enrollments = await query('SELECT * FROM enrollments WHERE id = ?', [id]);
+    if (enrollments.length === 0) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    if (enrollments[0].status !== 'Cashier Review') {
+      return res.status(400).json({ success: false, message: 'Enrollment is not in Cashier Review status' });
+    }
+
+    // Use updated fees if provided, otherwise keep existing
+    const t = tuition ?? enrollments[0].tuition ?? 0;
+    const r = registration ?? enrollments[0].registration ?? 0;
+    const l = library ?? enrollments[0].library ?? 0;
+    const lb = lab ?? enrollments[0].lab ?? 0;
+    const i = id_fee ?? enrollments[0].id_fee ?? 0;
+    const o = others ?? enrollments[0].others ?? 0;
+    const totalAmount = t + r + l + lb + i + o;
+
+    await run(
+      `UPDATE enrollments SET 
+        status = 'For Dean Approval',
+        tuition = ?,
+        registration = ?,
+        library = ?,
+        lab = ?,
+        id_fee = ?,
+        others = ?,
+        total_amount = ?,
+        remarks = ?,
+        updated_at = datetime('now')
+       WHERE id = ?`,
+      [t, r, l, lb, i, o, totalAmount, remarks || enrollments[0].remarks || null, id]
+    );
+
+    // Log activity
+    await run(
+      'INSERT INTO activity_logs (user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?)',
+      [userId, 'CASHIER_APPROVE_ENROLLMENT_REVIEW', 'enrollment', id, `Cashier reviewed and approved fees (₱${totalAmount.toFixed(2)}). Forwarded to Dean.`]
+    );
+
+    res.json({ success: true, message: 'Enrollment fees reviewed and approved. Forwarded to Dean for approval.' });
+  } catch (error) {
+    console.error('Approve enrollment review error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Cashier rejects enrollment review -> sends back to registrar
+export const rejectEnrollmentReview = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { remarks } = req.body;
+    const userId = req.user?.id;
+
+    const enrollments = await query('SELECT * FROM enrollments WHERE id = ?', [id]);
+    if (enrollments.length === 0) {
+      return res.status(404).json({ success: false, message: 'Enrollment not found' });
+    }
+
+    if (enrollments[0].status !== 'Cashier Review') {
+      return res.status(400).json({ success: false, message: 'Enrollment is not in Cashier Review status' });
+    }
+
+    await run(
+      `UPDATE enrollments SET 
+        status = 'For Registrar Assessment',
+        remarks = ?,
+        rejected_by = ?,
+        rejected_at = datetime('now'),
+        updated_at = datetime('now')
+       WHERE id = ?`,
+      [remarks || 'Returned by cashier for fee adjustment', userId, id]
+    );
+
+    // Log activity
+    await run(
+      'INSERT INTO activity_logs (user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?)',
+      [userId, 'CASHIER_REJECT_ENROLLMENT_REVIEW', 'enrollment', id, `Cashier returned enrollment to registrar: ${remarks || 'No reason given'}`]
+    );
+
+    res.json({ success: true, message: 'Enrollment returned to registrar for re-assessment.' });
+  } catch (error) {
+    console.error('Reject enrollment review error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+export default { listPendingTransactions, listTransactions, processTransaction, cashierReport, listTuitionAssessments, approveTuitionAssessment, listInstallmentPayments, approveInstallmentPayment, rejectInstallmentPayment, listEnrollmentsForReview, updateEnrollmentFees, approveEnrollmentReview, rejectEnrollmentReview };

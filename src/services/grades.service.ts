@@ -52,6 +52,15 @@ class GradesService {
       throw new Error(handleApiError(error));
     }
   }
+
+  async getPendingGrades(): Promise<any> {
+    try {
+      const response = await api.get('/grades/pending');
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
 }
 
 export const gradesService = new GradesService();

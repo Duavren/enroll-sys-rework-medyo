@@ -28,16 +28,18 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|pdf/;
+    const allowedTypes = /jpeg|jpg|png|pdf|doc|docx/i;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    const mimetype = allowedTypes.test(file.mimetype) || 
+                     file.mimetype === 'application/msword' || 
+                     file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
     if (mimetype && extname) {
       return cb(null, true);
     } else {
-      cb(new Error('Only images and PDF files are allowed'));
+      cb(new Error('Only images (JPG, PNG), PDF, and Word documents (DOC, DOCX) are allowed'));
     }
   }
 });

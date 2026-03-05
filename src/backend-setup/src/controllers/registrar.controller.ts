@@ -390,10 +390,10 @@ export const approveSubjectAssessment = async (req: AuthRequest, res: Response) 
     const otherFees = others || 0;
     const totalAmount = tuitionFee + regFee + libFee + labFee + idFee + otherFees;
 
-    // Update enrollment with assessment and forward to dean
+    // Update enrollment with assessment and forward to cashier for review
     await run(
       `UPDATE enrollments SET 
-        status = 'For Dean Approval',
+        status = 'Cashier Review',
         tuition = ?,
         registration = ?,
         library = ?,
@@ -412,12 +412,12 @@ export const approveSubjectAssessment = async (req: AuthRequest, res: Response) 
     // Log activity
     await run(
       'INSERT INTO activity_logs (user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?)',
-      [userId, 'APPROVE_SUBJECT_ASSESSMENT', 'enrollment', id, `Subject assessment approved, total: ₱${totalAmount}`]
+      [userId, 'APPROVE_SUBJECT_ASSESSMENT', 'enrollment', id, `Subject assessment approved, total: ₱${totalAmount}. Forwarded to Cashier for review.`]
     );
 
     res.json({
       success: true,
-      message: 'Subject assessment approved. Forwarded to Dean for approval.',
+      message: 'Subject assessment approved. Forwarded to Cashier for fee review.',
       data: { total_amount: totalAmount }
     });
   } catch (error) {

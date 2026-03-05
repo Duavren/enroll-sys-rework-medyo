@@ -17,7 +17,10 @@ import {
   FileText,
   Eye,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ClipboardList,
+  Edit,
+  Save
 } from 'lucide-react';
 import {
   Dialog,
@@ -57,6 +60,12 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
   const [loadingInstallments, setLoadingInstallments] = useState(false);
   const [rejectingPaymentId, setRejectingPaymentId] = useState<number | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [enrollmentReviews, setEnrollmentReviews] = useState<any[]>([]);
+  const [loadingReviews, setLoadingReviews] = useState(false);
+  const [editingEnrollmentId, setEditingEnrollmentId] = useState<number | null>(null);
+  const [feeForm, setFeeForm] = useState({ tuition: 0, registration: 0, library: 0, lab: 0, id_fee: 0, others: 0, remarks: '' });
+  const [rejectEnrollmentId, setRejectEnrollmentId] = useState<number | null>(null);
+  const [rejectEnrollmentReason, setRejectEnrollmentReason] = useState('');
 
   const loadTransactions = async () => {
     try {
@@ -135,6 +144,26 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
     return () => { mounted = false; };
   }, [activeSection]);
 
+  // Load enrollment reviews
+  useEffect(() => {
+    let mounted = true;
+    const loadReviews = async () => {
+      if (activeSection !== 'Enrollment Review') return;
+      try {
+        setLoadingReviews(true);
+        const resp = await cashierService.getEnrollmentReviews();
+        if (!mounted) return;
+        setEnrollmentReviews(resp?.data || resp || []);
+      } catch (err) {
+        console.error('Failed loading enrollment reviews', err);
+      } finally {
+        if (mounted) setLoadingReviews(false);
+      }
+    };
+    loadReviews();
+    return () => { mounted = false; };
+  }, [activeSection]);
+
   const handleProcess = async (txId: number, action: 'complete' | 'reject') => {
     try {
       setLoading(true);
@@ -189,6 +218,7 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
 
   const menuItems = [
     { name: 'Dashboard', icon: LayoutDashboard },
+    { name: 'Enrollment Review', icon: ClipboardList },
     { name: 'Tuition Assessments', icon: FileText },
     { name: 'Pending Verifications', icon: Clock },
     { name: 'Transaction Logs', icon: FileText },
@@ -504,6 +534,329 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      </Card>
+    );
+  };
+
+  const renderEnrollmentReviewContent = () => {
+    if (loadingReviews) return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+
+    const refreshReviews = async () => {
+      try {
+        setLoadingReviews(true);
+        const resp = await cashierService.getEnrollmentReviews();
+        setEnrollmentReviews(resp?.data || resp || []);
+      } catch (err) {
+        console.error('Failed refreshing enrollment reviews', err);
+      } finally {
+        setLoadingReviews(false);
+      }
+    };
+
+    const openFeeEditor = (enrollment: any) => {
+      setEditingEnrollmentId(enrollment.id);
+      setFeeForm({
+        tuition: enrollment.tuition || 0,
+        registration: enrollment.registration || 0,
+        library: enrollment.library || 0,
+        lab: enrollment.lab || 0,
+        id_fee: enrollment.id_fee || 0,
+        others: enrollment.others || 0,
+        remarks: enrollment.remarks || ''
+      });
+    };
+
+    const handleSaveFees = async (enrollmentId: number) => {
+      try {
+        setLoadingReviews(true);
+        await cashierService.updateEnrollmentFees(enrollmentId, {
+          tuition: feeForm.tuition,
+          registration: feeForm.registration,
+          library: feeForm.library,
+          lab: feeForm.lab,
+          id_fee: feeForm.id_fee,
+          others: feeForm.others
+        });
+        setEditingEnrollmentId(null);
+        alert('Fees saved successfully.');
+        await refreshReviews();
+      } catch (err: any) {
+        alert(err.message || 'Failed to save fees');
+      } finally {
+        setLoadingReviews(false);
+      }
+    };
+
+    const handleApproveReview = async (enrollmentId: number) => {
+      try {
+        setLoadingReviews(true);
+        await cashierService.approveEnrollmentReview(enrollmentId);
+        setEditingEnrollmentId(null);
+        alert('Enrollment approved and forwarded to Dean.');
+        await refreshReviews();
+      } catch (err: any) {
+        alert(err.message || 'Failed to approve enrollment');
+      } finally {
+        setLoadingReviews(false);
+      }
+    };
+
+    const handleRejectReview = async (enrollmentId: number) => {
+      try {
+        setLoadingReviews(true);
+        await cashierService.rejectEnrollmentReview(enrollmentId, rejectEnrollmentReason);
+        setRejectEnrollmentId(null);
+        setRejectEnrollmentReason('');
+        alert('Enrollment returned to registrar for re-assessment.');
+        await refreshReviews();
+      } catch (err: any) {
+        alert(err.message || 'Failed to reject enrollment');
+      } finally {
+        setLoadingReviews(false);
+      }
+    };
+
+    const feeTotal = feeForm.tuition + feeForm.registration + feeForm.library + feeForm.lab + feeForm.id_fee + feeForm.others;
+
+    return (
+      <Card className="border-0 shadow-lg">
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-semibold">Enrollment Fee Review</h3>
+              <p className="text-sm text-slate-500">Review and adjust fees set by the registrar before forwarding to the Dean.</p>
+            </div>
+            <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50">
+              {enrollmentReviews.length} Pending
+            </Badge>
+          </div>
+
+          {enrollmentReviews.length === 0 ? (
+            <div className="text-center py-12">
+              <ClipboardList className="h-12 w-12 text-slate-300 mx-auto mb-3" />
+              <p className="text-sm text-slate-500">No enrollments pending cashier review.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {enrollmentReviews.map((enrollment: any) => {
+                const isEditing = editingEnrollmentId === enrollment.id;
+                const isRejecting = rejectEnrollmentId === enrollment.id;
+
+                return (
+                  <div key={enrollment.id} className="border rounded-xl overflow-hidden bg-white shadow-sm hover:shadow-md transition-all">
+                    {/* Enrollment Header */}
+                    <div className="p-4 bg-gradient-to-r from-slate-50 to-blue-50 border-b">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-slate-900">{enrollment.student_name}</p>
+                          <p className="text-sm text-slate-600">
+                            {enrollment.student_id} • {enrollment.course} • Year {enrollment.year_level}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {enrollment.school_year} • {enrollment.semester} Semester • {enrollment.subject_count || 0} subjects
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-bold text-blue-600">
+                            ₱{(enrollment.total_amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </p>
+                          <Badge className="bg-amber-100 text-amber-700 border-0 text-xs">Cashier Review</Badge>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Fee Breakdown */}
+                    <div className="p-4">
+                      {isEditing ? (
+                        /* Editable Fee Form */
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Edit className="h-4 w-4 text-blue-600" />
+                            <h4 className="font-medium text-sm text-blue-700">Editing Fee Breakdown</h4>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-xs text-slate-500 mb-1 block">Tuition Fee</label>
+                              <Input
+                                type="number"
+                                value={feeForm.tuition}
+                                onChange={(e) => setFeeForm(f => ({ ...f, tuition: parseFloat(e.target.value) || 0 }))}
+                                className="text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 mb-1 block">Registration Fee</label>
+                              <Input
+                                type="number"
+                                value={feeForm.registration}
+                                onChange={(e) => setFeeForm(f => ({ ...f, registration: parseFloat(e.target.value) || 0 }))}
+                                className="text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 mb-1 block">Library Fee</label>
+                              <Input
+                                type="number"
+                                value={feeForm.library}
+                                onChange={(e) => setFeeForm(f => ({ ...f, library: parseFloat(e.target.value) || 0 }))}
+                                className="text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 mb-1 block">Laboratory Fee</label>
+                              <Input
+                                type="number"
+                                value={feeForm.lab}
+                                onChange={(e) => setFeeForm(f => ({ ...f, lab: parseFloat(e.target.value) || 0 }))}
+                                className="text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 mb-1 block">ID Fee</label>
+                              <Input
+                                type="number"
+                                value={feeForm.id_fee}
+                                onChange={(e) => setFeeForm(f => ({ ...f, id_fee: parseFloat(e.target.value) || 0 }))}
+                                className="text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-xs text-slate-500 mb-1 block">Other Fees</label>
+                              <Input
+                                type="number"
+                                value={feeForm.others}
+                                onChange={(e) => setFeeForm(f => ({ ...f, others: parseFloat(e.target.value) || 0 }))}
+                                className="text-sm"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-xs text-slate-500 mb-1 block">Remarks (optional)</label>
+                            <Input
+                              value={feeForm.remarks}
+                              onChange={(e) => setFeeForm(f => ({ ...f, remarks: e.target.value }))}
+                              placeholder="Add cashier remarks..."
+                              className="text-sm"
+                            />
+                          </div>
+                          <div className="flex justify-between items-center pt-2 border-t">
+                            <div className="text-sm">
+                              <span className="text-slate-500">New Total: </span>
+                              <span className="font-bold text-blue-600 text-lg">
+                                ₱{feeTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                            <div className="flex gap-2">
+                              <Button size="sm" variant="outline" onClick={() => setEditingEnrollmentId(null)}>
+                                Cancel
+                              </Button>
+                              <Button size="sm" variant="secondary" onClick={() => handleSaveFees(enrollment.id)}>
+                                <Save className="h-3.5 w-3.5 mr-1" />
+                                Save Fees
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : isRejecting ? (
+                        /* Rejection Form */
+                        <div className="space-y-3">
+                          <h4 className="font-medium text-sm text-red-700">Return to Registrar</h4>
+                          <Input
+                            value={rejectEnrollmentReason}
+                            onChange={(e) => setRejectEnrollmentReason(e.target.value)}
+                            placeholder="Reason for returning (e.g., incorrect fee computation)..."
+                            className="text-sm"
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <Button size="sm" variant="outline" onClick={() => { setRejectEnrollmentId(null); setRejectEnrollmentReason(''); }}>
+                              Cancel
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => handleRejectReview(enrollment.id)}>
+                              <XCircle className="h-3.5 w-3.5 mr-1" />
+                              Confirm Return
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Read-only Fee Display */
+                        <div>
+                          <div className="grid grid-cols-3 gap-2 text-sm mb-3">
+                            {enrollment.tuition > 0 && (
+                              <div className="flex justify-between bg-slate-50 rounded-lg px-3 py-2">
+                                <span className="text-slate-500">Tuition</span>
+                                <span className="font-medium">₱{enrollment.tuition?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            )}
+                            {enrollment.registration > 0 && (
+                              <div className="flex justify-between bg-slate-50 rounded-lg px-3 py-2">
+                                <span className="text-slate-500">Registration</span>
+                                <span className="font-medium">₱{enrollment.registration?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            )}
+                            {enrollment.library > 0 && (
+                              <div className="flex justify-between bg-slate-50 rounded-lg px-3 py-2">
+                                <span className="text-slate-500">Library</span>
+                                <span className="font-medium">₱{enrollment.library?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            )}
+                            {enrollment.lab > 0 && (
+                              <div className="flex justify-between bg-slate-50 rounded-lg px-3 py-2">
+                                <span className="text-slate-500">Laboratory</span>
+                                <span className="font-medium">₱{enrollment.lab?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            )}
+                            {enrollment.id_fee > 0 && (
+                              <div className="flex justify-between bg-slate-50 rounded-lg px-3 py-2">
+                                <span className="text-slate-500">ID Fee</span>
+                                <span className="font-medium">₱{enrollment.id_fee?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            )}
+                            {enrollment.others > 0 && (
+                              <div className="flex justify-between bg-slate-50 rounded-lg px-3 py-2">
+                                <span className="text-slate-500">Others</span>
+                                <span className="font-medium">₱{enrollment.others?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                              </div>
+                            )}
+                          </div>
+                          {enrollment.remarks && (
+                            <p className="text-xs text-slate-500 mb-3">
+                              <span className="font-medium">Registrar Remarks:</span> {enrollment.remarks}
+                            </p>
+                          )}
+                          <div className="flex items-center justify-between pt-3 border-t">
+                            {enrollment.scholarship_type && enrollment.scholarship_type !== 'None' && (
+                              <Badge className="bg-indigo-100 text-indigo-700 border-0 text-xs">
+                                🎓 {enrollment.scholarship_type}
+                              </Badge>
+                            )}
+                            <div className="flex gap-2 ml-auto">
+                              <Button size="sm" variant="outline" onClick={() => openFeeEditor(enrollment)}>
+                                <Edit className="h-3.5 w-3.5 mr-1" />
+                                Edit Fees
+                              </Button>
+                              <Button size="sm" variant="destructive" className="bg-red-50 text-red-600 hover:bg-red-100 border border-red-200" onClick={() => setRejectEnrollmentId(enrollment.id)}>
+                                <XCircle className="h-3.5 w-3.5 mr-1" />
+                                Return
+                              </Button>
+                              <Button size="sm" onClick={() => handleApproveReview(enrollment.id)}>
+                                <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                                Approve & Forward to Dean
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -844,6 +1197,7 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
           {/* Content Area */}
           <div className="col-span-9">
             {activeSection === 'Dashboard' && renderDashboardContent()}
+            {activeSection === 'Enrollment Review' && renderEnrollmentReviewContent()}
             {activeSection === 'Tuition Assessments' && renderTuitionAssessmentsContent()}
             {activeSection === 'Pending Verifications' && renderPendingVerificationsContent()}
             {activeSection === 'Transaction Logs' && renderTransactionsContent()}

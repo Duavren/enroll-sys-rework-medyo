@@ -90,6 +90,71 @@ class CashierService {
       throw new Error(handleApiError(error));
     }
   }
+
+  // Enrollment Review endpoints
+  async getEnrollmentsForReview() {
+    try {
+      const res = await api.get('/cashier/enrollment-reviews');
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  async updateEnrollmentFees(enrollmentId: number | string, fees: { tuition?: number; registration?: number; library?: number; lab?: number; id_fee?: number; others?: number; }) {
+    try {
+      const res = await api.put(`/cashier/enrollment-reviews/${enrollmentId}/update-fees`, fees);
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  async approveEnrollmentReview(enrollmentId: number | string, remarks?: string) {
+    try {
+      const res = await api.put(`/cashier/enrollment-reviews/${enrollmentId}/approve`, { remarks });
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  async rejectEnrollmentReview(enrollmentId: number | string, remarks?: string) {
+    try {
+      const res = await api.put(`/cashier/enrollment-reviews/${enrollmentId}/reject-review`, { remarks });
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  // Enrollment Review (Cashier reviews fees before Dean)
+  async getEnrollmentReviews() {
+    try {
+      const res = await api.get('/cashier/enrollment-reviews');
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  async approveEnrollmentReview(enrollmentId: number | string, remarks?: string) {
+    try {
+      const res = await api.put(`/cashier/enrollment-reviews/${enrollmentId}/approve`, { remarks });
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  async rejectEnrollmentReview(enrollmentId: number | string, remarks?: string) {
+    try {
+      const res = await api.put(`/cashier/enrollment-reviews/${enrollmentId}/reject-review`, { remarks });
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
 }
 
 export const cashierService = new CashierService();

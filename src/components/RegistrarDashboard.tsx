@@ -347,13 +347,13 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
       const finalTuition = assessmentForm.tuition - getTuitionDeduction(assessmentForm.scholarship_coverage, assessmentForm.tuition);
       const formToSubmit = { ...assessmentForm, tuition: finalTuition };
       await registrarService.assessEnrollment(selectedEnrollmentForAssess.id, formToSubmit);
-      // 2. Forward to Dean
+      // 2. Forward to Cashier for review
       await registrarService.approveSubjectAssessment(selectedEnrollmentForAssess.id, {
         ...formToSubmit,
         remarks: assessmentForm.remarks
       });
       setAssessDialogOpen(false);
-      alert('Assessment complete. Enrollment forwarded to Dean for approval.');
+      alert('Assessment complete. Enrollment forwarded to Cashier for fee review.');
       fetchData();
     } catch (err: any) {
       console.error(err);
@@ -1350,7 +1350,7 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
                 <Button onClick={handleAssessEnrollment} disabled={loading || !subjectAssessmentDetails?.subjects?.length}
                   className="">
                   {loading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                  Complete & Forward to Dean
+                  Complete & Forward to Cashier
                 </Button>
               </div>
             </div>

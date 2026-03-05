@@ -68,7 +68,7 @@ async function setupDatabase() {
         student_id INTEGER NOT NULL,
         school_year TEXT NOT NULL,
         semester TEXT NOT NULL CHECK(semester IN ('1st', '2nd', 'Summer')),
-        status TEXT DEFAULT 'Pending Assessment' CHECK(status IN ('Pending Assessment', 'For Admin Approval', 'For Subject Selection', 'For Registrar Assessment', 'For Dean Approval', 'For Payment', 'Payment Verification', 'Enrolled', 'Rejected')),
+        status TEXT DEFAULT 'Pending Assessment' CHECK(status IN ('Pending Assessment', 'For Admin Approval', 'For Subject Selection', 'For Registrar Assessment', 'Cashier Review', 'For Dean Approval', 'For Payment', 'Payment Verification', 'Enrolled', 'Rejected')),
         enrollment_date TEXT DEFAULT (datetime('now')),
         section_id INTEGER,
         assessed_by INTEGER,
@@ -144,6 +144,65 @@ async function setupDatabase() {
     try {
       db.exec("ALTER TABLE enrollments ADD COLUMN rejected_at TEXT");
     } catch (e) {}
+
+    // Migration: Update CHECK constraint to include 'Cashier Review' status for existing databases
+    try {
+      const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='enrollments'").get() as any;
+      if (tableInfo?.sql && !tableInfo.sql.includes('Cashier Review')) {
+        console.log('🔄 Migrating enrollments table to add Cashier Review status...');
+        db.exec('PRAGMA foreign_keys=OFF');
+        db.exec(`
+          CREATE TABLE enrollments_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_id INTEGER NOT NULL,
+            school_year TEXT NOT NULL,
+            semester TEXT NOT NULL CHECK(semester IN ('1st', '2nd', 'Summer')),
+            status TEXT DEFAULT 'Pending Assessment' CHECK(status IN ('Pending Assessment', 'For Admin Approval', 'For Subject Selection', 'For Registrar Assessment', 'Cashier Review', 'For Dean Approval', 'For Payment', 'Payment Verification', 'Enrolled', 'Rejected')),
+            enrollment_date TEXT DEFAULT (datetime('now')),
+            section_id INTEGER,
+            assessed_by INTEGER,
+            assessed_at TEXT,
+            approved_by INTEGER,
+            approved_at TEXT,
+            rejected_by INTEGER,
+            rejected_at TEXT,
+            total_units INTEGER DEFAULT 0,
+            total_amount REAL DEFAULT 0.00,
+            scholarship_type TEXT DEFAULT 'None',
+            scholarship_letter_path TEXT,
+            scholarship_coverage TEXT,
+            tuition REAL DEFAULT 0.00,
+            registration REAL DEFAULT 0.00,
+            library REAL DEFAULT 0.00,
+            lab REAL DEFAULT 0.00,
+            id_fee REAL DEFAULT 0.00,
+            others REAL DEFAULT 0.00,
+            remarks TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
+            FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE SET NULL,
+            FOREIGN KEY (assessed_by) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
+            FOREIGN KEY (rejected_by) REFERENCES users(id) ON DELETE SET NULL
+          )
+        `);
+        // Copy data - get existing column names to handle missing columns
+        const cols = (db.prepare("PRAGMA table_info(enrollments)").all() as any[]).map((c: any) => c.name);
+        const newCols = ['id','student_id','school_year','semester','status','enrollment_date','section_id','assessed_by','assessed_at','approved_by','approved_at','rejected_by','rejected_at','total_units','total_amount','scholarship_type','scholarship_letter_path','scholarship_coverage','tuition','registration','library','lab','id_fee','others','remarks','created_at','updated_at'];
+        const commonCols = newCols.filter(c => cols.includes(c));
+        const colList = commonCols.join(', ');
+        db.exec(`INSERT INTO enrollments_new (${colList}) SELECT ${colList} FROM enrollments`);
+        db.exec('DROP TABLE enrollments');
+        db.exec('ALTER TABLE enrollments_new RENAME TO enrollments');
+        db.exec('CREATE INDEX IF NOT EXISTS idx_student_enrollment ON enrollments(student_id, school_year, semester)');
+        db.exec('CREATE INDEX IF NOT EXISTS idx_enrollment_status ON enrollments(status)');
+        db.exec('PRAGMA foreign_keys=ON');
+        console.log('✅ Enrollments table migrated with Cashier Review status');
+      }
+    } catch (migrationErr) {
+      console.warn('⚠️ Enrollment table migration skipped or failed:', migrationErr);
+    }
 
     // Create subjects table
     db.exec(`
@@ -478,6 +537,16 @@ async function setupDatabase() {
       if (!hasScheduleId) {
         db.exec("ALTER TABLE enrollment_subjects ADD COLUMN schedule_id INTEGER REFERENCES subject_schedules(id)");
         console.log('✅ Added schedule_id column to enrollment_subjects');
+      }
+    } catch (e) {}
+
+    // Add grade_status column to enrollment_subjects for tracking grade submission/approval
+    try {
+      const info2 = db.prepare("PRAGMA table_info(enrollment_subjects)").all();
+      const hasGradeStatus = info2.some((c: any) => c.name === 'grade_status');
+      if (!hasGradeStatus) {
+        db.exec("ALTER TABLE enrollment_subjects ADD COLUMN grade_status TEXT DEFAULT NULL");
+        console.log('✅ Added grade_status column to enrollment_subjects');
       }
     } catch (e) {}
 

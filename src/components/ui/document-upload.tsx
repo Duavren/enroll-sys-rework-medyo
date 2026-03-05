@@ -28,12 +28,12 @@ export function DocumentUpload({
   const [error, setError] = useState('');
 
   const validateFile = (file: File) => {
-    const maxSize = 5 * 1024 * 1024; // 5MB
+    const maxSize = 15 * 1024 * 1024; // 15MB
     const validFormats = acceptedFormats.split(',').map(f => f.trim());
     const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
 
     if (file.size > maxSize) {
-      setError('File size must be less than 5MB');
+      setError('File size must be less than 15MB');
       return false;
     }
 

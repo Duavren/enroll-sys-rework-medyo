@@ -1347,13 +1347,13 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
 
   const renderEnrollmentContent = () => (
     <div>
-      {['Pending Assessment', 'For Admin Approval', 'For Registrar Assessment', 'For Dean Approval', 'Payment Verification'].includes(enrollmentStatus) && (
+      {['Pending Assessment', 'For Admin Approval', 'For Registrar Assessment', 'Cashier Review', 'For Dean Approval', 'Payment Verification'].includes(enrollmentStatus) && (
         <Card className="border-0 shadow-lg p-8 text-center">
           <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mx-auto mb-4">
             <Clock className="h-8 w-8 text-orange-600" />
           </div>
-          <h3 className="text-xl mb-2">Enrollment {enrollmentStatus}</h3>
-          <p className="text-slate-600 mb-4">Your enrollment is being processed. Please wait for the next step.</p>
+          <h3 className="text-xl mb-2">Enrollment {enrollmentStatus === 'Cashier Review' ? 'Under Cashier Review' : enrollmentStatus}</h3>
+          <p className="text-slate-600 mb-4">{enrollmentStatus === 'Cashier Review' ? 'Your fees are being reviewed by the cashier. Please wait for approval.' : 'Your enrollment is being processed. Please wait for the next step.'}</p>
           <Badge className="bg-orange-100 text-orange-700 border-0">{enrollmentStatus}</Badge>
         </Card>
       )}
@@ -1408,7 +1408,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
         </Card>
       )}
 
-      {!['Pending Assessment', 'For Admin Approval', 'For Subject Selection', 'For Registrar Assessment', 'For Dean Approval', 'For Payment', 'Payment Verification', 'Enrolled'].includes(enrollmentStatus) && (
+      {!['Pending Assessment', 'For Admin Approval', 'For Subject Selection', 'For Registrar Assessment', 'Cashier Review', 'For Dean Approval', 'For Payment', 'Payment Verification', 'Enrolled'].includes(enrollmentStatus) && (
         <Card className="border-0 shadow-lg p-6">
           <div className="mb-8 border-b pb-6">
             <h3 className="text-lg font-semibold mb-4 text-blue-900">Scholarship Selection</h3>
@@ -2612,6 +2612,29 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
                   <DialogDescription>Review assessment fees and subject fees for this enrollment.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 mt-4">
+                  {/* Student Details Header - Like COR */}
+                  <div className="bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg p-4 mb-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <p className="text-xs text-slate-500 font-semibold uppercase">Student Name</p>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {studentProfile && `${studentProfile.first_name || ''} ${studentProfile.middle_name || ''} ${studentProfile.last_name || ''}`.trim()}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 font-semibold uppercase">Student ID</p>
+                        <p className="text-sm font-semibold text-slate-900">{studentProfile?.student_id || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 font-semibold uppercase">Course</p>
+                        <p className="text-sm font-semibold text-slate-900">{currentEnrollment?.course_name || studentProfile?.course || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 font-semibold uppercase">Year Level</p>
+                        <p className="text-sm font-semibold text-slate-900">{studentProfile?.year_level ? `${studentProfile.year_level}${studentProfile.year_level === 1 ? 'st' : studentProfile.year_level === 2 ? 'nd' : studentProfile.year_level === 3 ? 'rd' : 'th'} Year` : 'N/A'}</p>
+                      </div>
+                    </div>
+                  </div>
                   {/* Scholarship Info */}
                   {enrollmentDetails?.scholarship_type && enrollmentDetails.scholarship_type !== 'None' && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">

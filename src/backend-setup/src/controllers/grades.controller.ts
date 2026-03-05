@@ -96,9 +96,18 @@ export const bulkUpdateGrades = async (req: AuthRequest, res: Response) => {
     const { grades } = req.body; // Array of { enrollment_subject_id, grade }
     const userId = req.user?.id;
 
+    // Ensure grade_status column exists
+    try {
+      const tableInfo = await query("PRAGMA table_info(enrollment_subjects)");
+      const hasGradeStatus = (tableInfo || []).some((c: any) => c.name === 'grade_status');
+      if (!hasGradeStatus) {
+        await run("ALTER TABLE enrollment_subjects ADD COLUMN grade_status TEXT DEFAULT NULL");
+      }
+    } catch (e) {}
+
     const updatePromises = grades.map((g: any) =>
       run(
-        `UPDATE enrollment_subjects SET grade = ?, updated_at = datetime('now') WHERE id = ?`,
+        `UPDATE enrollment_subjects SET grade = ?, grade_status = 'Submitted', updated_at = datetime('now', 'utc') || 'Z' WHERE id = ?`,
         [g.grade, g.enrollment_subject_id]
       )
     );
@@ -108,15 +117,65 @@ export const bulkUpdateGrades = async (req: AuthRequest, res: Response) => {
     // Log activity
     await run(
       'INSERT INTO activity_logs (user_id, action, entity_type, description) VALUES (?, ?, ?, ?)',
-      [userId, 'BULK_UPDATE_GRADES', 'enrollment_subject', `Bulk updated ${grades.length} grades`]
+      [userId, 'BULK_UPDATE_GRADES', 'enrollment_subject', `Bulk updated ${grades.length} grades and submitted for dean approval`]
     );
 
     res.json({
       success: true,
-      message: `${grades.length} grades updated successfully`
+      message: `${grades.length} grades updated and submitted for dean approval`
     });
   } catch (error) {
     console.error('Bulk update grades error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+// Get grades pending dean approval
+export const getPendingGrades = async (req: AuthRequest, res: Response) => {
+  try {
+    // Ensure grade_status column exists
+    try {
+      const tableInfo = await query("PRAGMA table_info(enrollment_subjects)");
+      const hasGradeStatus = (tableInfo || []).some((c: any) => c.name === 'grade_status');
+      if (!hasGradeStatus) {
+        await run("ALTER TABLE enrollment_subjects ADD COLUMN grade_status TEXT DEFAULT NULL");
+      }
+    } catch (e) {}
+
+    const grades = await query(
+      `SELECT 
+        es.id,
+        es.enrollment_id,
+        es.subject_id,
+        es.grade,
+        es.grade_status,
+        CASE WHEN es.updated_at LIKE '%Z' THEN es.updated_at ELSE es.updated_at || 'Z' END as updated_at,
+        s.subject_code,
+        s.subject_name,
+        s.units,
+        st.student_id,
+        st.first_name || ' ' || st.last_name as student_name,
+        st.course,
+        st.year_level,
+        e.school_year,
+        e.semester
+      FROM enrollment_subjects es
+      JOIN enrollments e ON es.enrollment_id = e.id
+      JOIN subjects s ON es.subject_id = s.id
+      JOIN students st ON e.student_id = st.id
+      WHERE es.grade IS NOT NULL AND es.grade != '' AND es.grade_status = 'Submitted'
+      ORDER BY es.updated_at DESC`
+    );
+
+    res.json({
+      success: true,
+      data: grades
+    });
+  } catch (error) {
+    console.error('Get pending grades error:', error);
     res.status(500).json({
       success: false,
       message: 'Server error'
@@ -188,6 +247,16 @@ export const approveGrade = async (req: AuthRequest, res: Response) => {
       `INSERT INTO grade_approvals (enrollment_subject_id, approved_by, remarks, approved_at) VALUES (?, ?, ?, datetime('now'))`,
       [id, userId, remarks || null]
     );
+
+    // Update grade_status to 'Approved'
+    try {
+      await run(
+        `UPDATE enrollment_subjects SET grade_status = 'Approved', updated_at = datetime('now', 'utc') || 'Z' WHERE id = ?`,
+        [id]
+      );
+    } catch (e) {
+      console.warn('Could not update grade_status:', e);
+    }
 
     // Log activity
     await run(

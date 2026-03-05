@@ -73,6 +73,7 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
   const [curriculum, setCurriculum] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
   const [gradesList, setGradesList] = useState<any[]>([]);
+  const [pendingGrades, setPendingGrades] = useState<any[]>([]);
   const [selectedSection, setSelectedSection] = useState<string>('');
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState<string>('');
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -84,6 +85,7 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
   const [deleteFacultyOpen, setDeleteFacultyOpen] = useState(false);
   const [addProgramOpen, setAddProgramOpen] = useState(false);
   const [editProgramOpen, setEditProgramOpen] = useState(false);
+  const [deleteProgramOpen, setDeleteProgramOpen] = useState(false);
   const [viewCurriculumOpen, setViewCurriculumOpen] = useState(false);
   const [addSubjectToCurriculumOpen, setAddSubjectToCurriculumOpen] = useState(false);
   const [selectedFaculty, setSelectedFaculty] = useState<any>(null);
@@ -394,6 +396,20 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
     }
   };
 
+  const handleDeleteProgram = async () => {
+    if (!selectedProgram) return;
+    try {
+      setError('');
+      await deanService.deleteProgram(selectedProgram.id);
+      setDeleteProgramOpen(false);
+      setViewCurriculumOpen(false);
+      setSelectedProgram(null);
+      fetchData();
+    } catch (err: any) {
+      setError(err.message || 'Failed to delete program');
+    }
+  };
+
   const fetchForDeanEnrollments = async () => {
     try {
       setError('');
@@ -431,11 +447,24 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
     }
   };
 
+  const loadPendingGrades = async () => {
+    try {
+      setLoading(true);
+      const resp = await gradesService.getPendingGrades();
+      if (resp?.data) setPendingGrades(resp.data);
+    } catch (err: any) {
+      console.error('Failed to load pending grades:', err);
+      setPendingGrades([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleApproveGrade = async (enrollmentSubjectId: number) => {
     try {
       setLoading(true);
       await gradesService.approveGrade(enrollmentSubjectId);
-      await loadGrades();
+      await loadPendingGrades();
     } catch (err: any) {
       setError(err.message || 'Failed to approve grade');
     } finally {
@@ -1213,7 +1242,7 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
           <div className="flex items-center gap-2">
             <Button variant={approvalView === 'Enrollments' ? 'default' : 'outline'} onClick={() => { setApprovalView('Enrollments'); fetchForDeanEnrollments(); }}>Enrollments</Button>
             <Button variant={approvalView === 'Curriculum' ? 'default' : 'outline'} onClick={() => setApprovalView('Curriculum')}>Curriculum Updates</Button>
-            <Button variant={approvalView === 'Grades' ? 'default' : 'outline'} onClick={() => { setApprovalView('Grades'); setGradesDialogOpen(true); }}>Grades</Button>
+            <Button variant={approvalView === 'Grades' ? 'default' : 'outline'} onClick={() => { setApprovalView('Grades'); loadPendingGrades(); }}>Grades</Button>
           </div>
         </div>
 
@@ -1258,7 +1287,38 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
 
               {approvalView === 'Grades' && (
                 <div>
-                  <p className="text-sm text-slate-600">Grades pending for approval will appear here.</p>
+                  <p className="text-sm text-slate-600 mb-4">Grades submitted by admin for your approval.</p>
+                  {loading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                    </div>
+                  ) : pendingGrades.length === 0 ? (
+                    <p className="text-center text-slate-500 py-8">No grades pending approval.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingGrades.map((g: any) => (
+                        <div key={g.id} className="p-4 bg-white border rounded-xl shadow-sm hover:shadow-md transition-all">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-slate-900">{g.student_name}</p>
+                              <p className="text-sm text-slate-600">
+                                {g.subject_code} — {g.subject_name} ({g.units} units)
+                              </p>
+                              <div className="flex items-center gap-3 mt-1">
+                                <span className="text-sm font-semibold text-indigo-600">Grade: {g.grade}</span>
+                                <span className="text-xs text-slate-400">{g.course} • Year {g.year_level}</span>
+                                <span className="text-xs text-slate-400">{g.school_year} • {g.semester} Sem</span>
+                              </div>
+                              <p className="text-xs text-slate-400 mt-1">Submitted: {g.updated_at ? new Date(g.updated_at).toLocaleString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) : 'N/A'}</p>
+                            </div>
+                            <Button size="sm" onClick={() => handleApproveGrade(g.id)}>
+                              <CheckCircle className="h-3.5 w-3.5 mr-1" /> Approve
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1467,7 +1527,13 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
         )}
         <Card className="border-0 shadow-lg">
           <div className="p-6">
-            <p className="text-slate-600 mb-6">Manage curriculum for each program.</p>
+            <div className="flex items-center justify-between mb-6">
+              <p className="text-slate-600">Manage curriculum for each program.</p>
+              <Button onClick={() => setAddProgramOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Program
+              </Button>
+            </div>
             {programs.length === 0 ? (
               <p className="text-center text-slate-500 py-8">No programs found. Create a program first.</p>
             ) : (
@@ -1494,6 +1560,94 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
             )}
           </div>
         </Card>
+
+        {/* Add Program Dialog */}
+        <Dialog open={addProgramOpen} onOpenChange={setAddProgramOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add Curriculum Program</DialogTitle>
+              <DialogDescription>Create a new program to manage its curriculum.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Program Code</Label>
+                  <Input
+                    placeholder="e.g. BSIT"
+                    value={newProgramForm.program_code}
+                    onChange={(e) => setNewProgramForm({ ...newProgramForm, program_code: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Degree Type</Label>
+                  <Select
+                    value={newProgramForm.degree_type}
+                    onValueChange={(value) => setNewProgramForm({ ...newProgramForm, degree_type: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Bachelor">Bachelor</SelectItem>
+                      <SelectItem value="Associate">Associate</SelectItem>
+                      <SelectItem value="Master">Master</SelectItem>
+                      <SelectItem value="Doctorate">Doctorate</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Program Name</Label>
+                <Input
+                  placeholder="e.g. Bachelor of Science in Information Technology"
+                  value={newProgramForm.program_name}
+                  onChange={(e) => setNewProgramForm({ ...newProgramForm, program_name: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Textarea
+                  placeholder="Brief description of the program"
+                  value={newProgramForm.description}
+                  onChange={(e) => setNewProgramForm({ ...newProgramForm, description: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Department</Label>
+                <Input
+                  placeholder="e.g. College of Computer Studies"
+                  value={newProgramForm.department}
+                  onChange={(e) => setNewProgramForm({ ...newProgramForm, department: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Duration (Years)</Label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="6"
+                    value={newProgramForm.duration_years}
+                    onChange={(e) => setNewProgramForm({ ...newProgramForm, duration_years: parseInt(e.target.value) || 4 })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Total Units</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={newProgramForm.total_units}
+                    onChange={(e) => setNewProgramForm({ ...newProgramForm, total_units: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setAddProgramOpen(false)}>Cancel</Button>
+                <Button onClick={handleCreateProgram}>Create Program</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* View Curriculum Dialog */}
         <Dialog open={viewCurriculumOpen} onOpenChange={setViewCurriculumOpen}>
@@ -1539,6 +1693,14 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Add Subject
+                </Button>
+                <Button 
+                  variant="outline"
+                  className="text-red-600 hover:bg-red-50"
+                  onClick={() => setDeleteProgramOpen(true)}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Program
                 </Button>
                 <Button variant="outline" onClick={() => setViewCurriculumOpen(false)}>Close</Button>
               </div>
@@ -1607,6 +1769,27 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Delete Program Confirmation Dialog */}
+        <AlertDialog open={deleteProgramOpen} onOpenChange={setDeleteProgramOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Program</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete <span className="font-semibold">{selectedProgram?.program_code} - {selectedProgram?.program_name}</span>? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction 
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={handleDeleteProgram}
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     );
   };

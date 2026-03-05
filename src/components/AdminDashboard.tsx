@@ -408,8 +408,10 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       if (activeSection === 'Manage Students' || activeSection === 'SHS Grades' || activeSection === 'College Grades') {
         const studentsData = await adminService.getAllStudents();
         const studentList = studentsData.data?.map((s: any) => ({
+          ...s,
           id: s.student_id,
           studentId: s.id,
+          dbId: s.id,
           name: `${s.first_name || ''} ${s.last_name || ''}`.trim(),
           course: s.course || 'N/A',
           year: s.year_level ? `${s.year_level}${getOrdinalSuffix(s.year_level)}` : 'N/A',
@@ -417,7 +419,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           corStatus: s.cor_status || 'Updated',
           gradesComplete: s.grades_complete || false,
           clearanceStatus: s.clearance_status || 'Cleared',
-          ...s
         })) || [];
         setStudents(studentList);
 
@@ -846,17 +847,31 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       setError('');
       setLoadingSection('save-grades');
       // Convert grades array to the format expected by the API
-      const gradesToUpdate = selectedStudent.grades.map((g: any, index: number) => ({
-        enrollment_subject_id: g.enrollment_subject_id || index + 1,
-        grade: g.grade
-      }));
+      // Only include entries with a valid enrollment_subject_id and a grade value
+      const gradesToUpdate = selectedStudent.grades
+        .filter((g: any) => (g.enrollment_subject_id || g.enrollment_subject_id === 0) && g.grade !== '' && g.grade !== null && g.grade !== undefined)
+        .map((g: any) => ({
+          enrollment_subject_id: g.enrollment_subject_id,
+          grade: g.grade
+        }));
       
-      // Use bulk update if available
       if (gradesToUpdate.length > 0) {
         await gradesService.bulkUpdateGrades(gradesToUpdate);
-        alert('Grades updated successfully');
+        alert('Grades saved and submitted for dean approval');
         setEditGradesOpen(false);
         await fetchDashboardData();
+      } else {
+        // Provide detailed error info
+        const hasNoGrades = selectedStudent.grades.every((g: any) => !g.grade || g.grade === '');
+        const hasNoIds = selectedStudent.grades.some((g: any) => !(g.enrollment_subject_id || g.enrollment_subject_id === 0));
+        
+        let msg = 'No valid grades to save. ';
+        if (hasNoGrades) {
+          msg += 'Please enter at least one grade for a subject.';
+        } else if (hasNoIds) {
+          msg += 'Some subjects are missing enrollment data. Try reloading the student.';
+        }
+        alert(msg);
       }
     } catch (err: any) {
       setError(err.message || 'Failed to update grades');
@@ -1866,12 +1881,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                         variant="outline"
                         onClick={async () => {
                           try {
-                            // Fetch existing grades
+                            // Fetch existing grades - student.id is now the string student_id
                             const gradesResp = await gradesService.getStudentGrades(student.id, { subject_type: 'SHS', school_year: selectedSchoolYear, semester: selectedSemester });
                             const existingGrades = gradesResp?.data || gradesResp || [];
 
                             // Fetch student details to locate latest enrollment
-                            const stuResp = await adminService.getStudentById(student.studentId || student.id);
+                            const stuResp = await adminService.getStudentById(student.dbId || student.studentId);
                             const stuData = stuResp?.data || stuResp || {};
                             const latestEnrollment = (stuData.enrollments || []).slice().reverse()[0];
 
@@ -1882,17 +1897,28 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               subjectsList = enrollmentDetails.enrollment_subjects || enrollmentDetails.subjects || [];
                             }
 
-                            // Merge existing grades with enrolled subjects
-                            const gradesMerged = (subjectsList.length > 0)
-                              ? subjectsList.map((es: any) => {
-                                  const match = existingGrades.find((g: any) => g.enrollment_subject_id === es.id || g.subject === es.subject_name || g.subject_id === es.subject_id);
-                                  return {
-                                    subject: es.subject_name || es.subject || match?.subject || '',
-                                    grade: match?.grade ?? '',
-                                    enrollment_subject_id: es.id
-                                  };
-                                })
-                              : (existingGrades.length > 0 ? existingGrades : []);
+                            // Build grades list with proper enrollment_subject_id mapping
+                            let gradesMerged: any[];
+                            if (subjectsList.length > 0) {
+                              gradesMerged = subjectsList.map((es: any) => {
+                                const match = existingGrades.find((g: any) => g.id === es.id || g.subject_id === es.subject_id);
+                                return {
+                                  subject: es.subject_name || es.subject_code || match?.subject_name || '',
+                                  grade: es.grade || match?.grade || '',
+                                  enrollment_subject_id: es.id,
+                                  subject_id: es.subject_id
+                                };
+                              });
+                            } else if (existingGrades.length > 0) {
+                              gradesMerged = existingGrades.map((g: any) => ({
+                                subject: g.subject_name || g.subject_code || '',
+                                grade: g.grade || '',
+                                enrollment_subject_id: g.id,
+                                subject_id: g.subject_id
+                              }));
+                            } else {
+                              gradesMerged = [];
+                            }
 
                             setSelectedStudent({ ...student, grades: gradesMerged });
                             setEditGradesOpen(true);
@@ -2008,10 +2034,11 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               setSubjects(subjectsData.data || []);
                             }
 
+                            // student.id is the string student_id (e.g. "2024-00001"), student.dbId is the numeric DB id
                             const gradesResp = await gradesService.getStudentGrades(student.id, { subject_type: 'College' });
                             const existingGrades = gradesResp?.data || gradesResp || [];
 
-                            const stuResp = await adminService.getStudentById(student.studentId || student.id);
+                            const stuResp = await adminService.getStudentById(student.dbId || student.studentId);
                             const stuData = stuResp?.data || stuResp || {};
                             const latestEnrollment = (stuData.enrollments || []).slice().reverse()[0];
 
@@ -2022,17 +2049,30 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                               subjectsList = enrollmentDetails.enrollment_subjects || enrollmentDetails.subjects || [];
                             }
 
-                            const gradesMerged = (subjectsList.length > 0)
-                              ? subjectsList.map((es: any) => {
-                                  const match = existingGrades.find((g: any) => g.enrollment_subject_id === es.id || g.subject === es.subject_name || g.subject_id === es.subject_id);
-                                  return {
-                                    subject: es.subject_name || es.subject || match?.subject || '',
-                                    grade: match?.grade ?? '',
-                                    enrollment_subject_id: es.id,
-                                    subject_id: es.subject_id
-                                  };
-                                })
-                              : (existingGrades.length > 0 ? existingGrades : []);
+                            // Build grades list: prefer enrollment subjects list, map enrollment_subject_id from es.id
+                            let gradesMerged: any[];
+                            if (subjectsList.length > 0) {
+                              gradesMerged = subjectsList.map((es: any) => {
+                                // existingGrades come from enrollment_subjects with es.* so id = enrollment_subject_id
+                                const match = existingGrades.find((g: any) => g.id === es.id || g.subject_id === es.subject_id);
+                                return {
+                                  subject: es.subject_name || es.subject_code || match?.subject_name || '',
+                                  grade: es.grade || match?.grade || '',
+                                  enrollment_subject_id: es.id,
+                                  subject_id: es.subject_id
+                                };
+                              });
+                            } else if (existingGrades.length > 0) {
+                              // Fallback: existingGrades from getStudentGrades returns es.* where es.id = enrollment_subject_id
+                              gradesMerged = existingGrades.map((g: any) => ({
+                                subject: g.subject_name || g.subject_code || '',
+                                grade: g.grade || '',
+                                enrollment_subject_id: g.id,
+                                subject_id: g.subject_id
+                              }));
+                            } else {
+                              gradesMerged = [];
+                            }
 
                             setSelectedStudent({ ...student, grades: gradesMerged });
                             setEditGradesOpen(true);
@@ -3005,9 +3045,12 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <div className="space-y-2">
                   {selectedStudent.grades?.map((grade: any, index: number) => (
                     <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                      <span className="text-sm text-slate-700">{grade.subject}</span>
-                      <Badge className="bg-blue-100 text-blue-700 border-0">
-                        {grade.grade}
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-slate-900">{grade.subject_code || grade.subject}</p>
+                        <p className="text-xs text-slate-500">{grade.subject_name || grade.subject}</p>
+                      </div>
+                      <Badge className="bg-blue-100 text-blue-700 border-0 ml-2">
+                        {grade.grade || 'N/A'}
                       </Badge>
                     </div>
                   ))}
@@ -3053,15 +3096,22 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                       return s.course === selectedStudent.course;
                     });
 
+                    // Show a warning if this grade entry doesn't have an enrollment_subject_id
+                    const hasValidId = grade.enrollment_subject_id || grade.enrollment_subject_id === 0;
+                    
                     return (
                       <div key={index} className="flex items-center gap-3">
+                        {!hasValidId && (
+                          <div className="text-xs text-orange-600 italic">(New Subject)</div>
+                        )}
                         <Select 
-                          value={grade.enrollment_subject_id?.toString() || grade.subject_id?.toString() || ''} 
+                          value={grade.subject_id?.toString() || ''} 
                           onValueChange={(value) => {
                             const selectedSubject = availableSubjects.find(s => s.id.toString() === value);
                             handleUpdateGradeField(index, 'subject', selectedSubject?.subject_name || '');
-                            handleUpdateGradeField(index, 'enrollment_subject_id', selectedSubject?.id || null);
                             handleUpdateGradeField(index, 'subject_id', selectedSubject?.id || null);
+                            // Important: keep the enrollment_subject_id unchanged - it's needed for the API
+                            // Only update it if we're adding a new subject (no enrollment_subject_id yet)
                           }}
                         >
                           <SelectTrigger className="flex-1">
