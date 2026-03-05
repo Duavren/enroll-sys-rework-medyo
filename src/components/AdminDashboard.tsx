@@ -214,6 +214,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [installmentPayments, setInstallmentPayments] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
+  const [accountRequests, setAccountRequests] = useState<any[]>([]);
   const [teachers, setTeachers] = useState<any[]>([]);
   const [sections, setSections] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
@@ -226,10 +227,23 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const [loadingSection, setLoadingSection] = useState<string | null>(null);
   const [error, setError] = useState<string>('');
 
-  const [suggestOpen, setSuggestOpen] = useState(false);
-  const [suggestedSubjects, setSuggestedSubjects] = useState<any[]>([]);
-  const [suggestStudent, setSuggestStudent] = useState<any>(null);
-  const [suggestEnrollmentId, setSuggestEnrollmentId] = useState<number | null>(null);
+  // Confirmation dialog state
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmData, setConfirmData] = useState<any>({
+    title: '',
+    message: '',
+    onConfirm: () => {},
+    onCancel: () => {},
+    isLoading: false
+  });
+
+  const [editAccountOpen, setEditAccountOpen] = useState(false);
+  const [editingAccountRequest, setEditingAccountRequest] = useState<any>(null);
+  const [editAccountForm, setEditAccountForm] = useState<any>({
+    student_id: '',
+  });
+  const [viewProfileOpen, setViewProfileOpen] = useState(false);
+  const [viewingProfile, setViewingProfile] = useState<any>(null);
 
   // Role label helpers: switch text between Faculty and Teacher based on active section
   const isFacultySection = activeSection === 'Manage Faculty';
@@ -404,9 +418,34 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         }
       }
 
+      // Fetch account requests
+      if (activeSection === 'Account Requests') {
+        try {
+          const accountRequestsData = await adminService.getAllStudents();
+          const accountList = accountRequestsData.data?.map((s: any) => ({
+            ...s,
+            id: s.student_id,
+            studentId: s.id,
+            dbId: s.id,
+            name: `${s.first_name || ''} ${s.last_name || ''}`.trim(),
+            course: s.course || 'N/A',
+            year: s.year_level ? `${s.year_level}${getOrdinalSuffix(s.year_level)}` : 'N/A',
+            section: s.section || 'N/A',
+            studentType: s.student_type || 'New',
+            email: s.email || 'N/A',
+            contactNumber: s.contact_number || 'N/A',
+            status: s.status || 'Pending'
+          })) || [];
+          setAccountRequests(accountList);
+        } catch (err) {
+          console.error('Failed to fetch account requests:', err);
+          setAccountRequests([]);
+        }
+      }
+
       // Fetch students
       if (activeSection === 'Manage Students' || activeSection === 'SHS Grades' || activeSection === 'College Grades') {
-        const studentsData = await adminService.getAllStudents();
+        const studentsData = await adminService.getAllStudents({ status: 'Active' });
         const studentList = studentsData.data?.map((s: any) => ({
           ...s,
           id: s.student_id,
@@ -918,8 +957,18 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
   const handleAddStudent = async () => {
     try {
       setLoadingSection('add-student');
-      await adminService.createStudent(newStudentForm);
-      alert('Student added successfully');
+      // Create the student
+      const result = await adminService.createStudent(newStudentForm);
+      
+      // Create account for the newly added student with username as student_id
+      try {
+        await adminService.createAccountsForExistingStudents();
+      } catch (accountErr) {
+        console.warn('Account creation completed but with warnings:', accountErr);
+        // Don't fail the student creation if account creation has issues
+      }
+      
+      alert('Student added successfully and account created');
       setAddStudentOpen(false);
       setNewStudentForm({
         student_id: '',
@@ -979,60 +1028,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
       alert(err.message || 'Failed to export students');
-    } finally {
-      setLoadingSection(null);
-    }
-  };
-
-  const handleSuggestSubjects = async (student: any) => {
-    try {
-      setSuggestStudent(student);
-      setLoadingSection('suggest-subjects');
-      const { reportsService } = await import('../services/reports.service');
-      const resp = await reportsService.suggestSubjects(student.id || student.student_id || student.studentId);
-      const suggestions = resp.data?.suggestions || resp.suggestions || [];
-      setSuggestedSubjects(suggestions);
-
-      // Fetch student details to get latest enrollment id
-      const studentIdInternal = student.studentId || student.student_id || null;
-      let enrollmentId: number | null = null;
-      if (studentIdInternal) {
-        try {
-          const details = await adminService.getStudentById(studentIdInternal);
-          const enrollments = details.data?.enrollments || details.enrollments || [];
-          if (enrollments.length > 0) {
-            enrollmentId = enrollments[0].id;
-          }
-        } catch (e) {
-          console.warn('Failed to fetch student enrollments', e);
-        }
-      }
-
-      setSuggestEnrollmentId(enrollmentId);
-      setSuggestOpen(true);
-    } catch (err: any) {
-      alert(err.message || 'Failed to get suggestions');
-    } finally {
-      setLoadingSection(null);
-    }
-  };
-
-  const handleAddSuggestedSubject = async (subject: any) => {
-    if (!suggestEnrollmentId) {
-      alert('No enrollment found for this student. Create or select an enrollment first.');
-      return;
-    }
-
-    try {
-      setLoadingSection('add-suggested-subject');
-      await enrollmentService.addSubject(suggestEnrollmentId, subject.id);
-      alert(`Subject ${subject.subject_code} added to enrollment ${suggestEnrollmentId}`);
-      // remove the added suggestion from list
-      setSuggestedSubjects(prev => prev.filter(s => s.id !== subject.id));
-      // refresh dashboard data to reflect changes
-      await fetchDashboardData();
-    } catch (err: any) {
-      alert(err.message || 'Failed to add subject');
     } finally {
       setLoadingSection(null);
     }
@@ -1433,12 +1428,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
 
                     {/* Summary card */}
                     <div className="rounded-xl bg-slate-900 text-white p-4 space-y-2.5">
-                      {totalUnits > 0 && (
-                        <div className="flex justify-between text-sm text-slate-400">
-                          <span>Subject fees &nbsp;({totalUnits} units × ₱700)</span>
-                          <span>₱{(totalUnits * 700).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-                        </div>
-                      )}
+                      {totalUnits > 0 && (() => {
+                        const perUnit = totalUnits > 0 ? Math.round(tuition / totalUnits) : 700;
+                        return (
+                          <div className="flex justify-between text-sm text-slate-400">
+                            <span>Subject fees &nbsp;({totalUnits} units × ₱{perUnit.toLocaleString()})</span>
+                            <span>₱{(totalUnits * perUnit).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                          </div>
+                        );
+                      })()}
                       <div className="flex justify-between text-sm text-slate-400">
                         <span>Misc. fees</span>
                         <span>₱{miscTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
@@ -1599,25 +1597,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             <Plus className="h-4 w-4" />
             Add Student
           </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={async () => {
-              try {
-                setLoadingSection('create-accounts');
-                const resp = await adminService.createAccountsForExistingStudents();
-                alert(`Created ${resp.data?.length || resp?.data?.length || 0} accounts.`);
-                await fetchDashboardData();
-              } catch (err: any) {
-                alert(err.message || 'Failed to create accounts');
-              } finally {
-                setLoadingSection(null);
-              }
-            }}
-          >
-            <UserPlus className="h-4 w-4" />
-            Create Accounts
-          </Button>
             <Button
               onClick={handleExportStudents}
               size="sm"
@@ -1665,15 +1644,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                     <Edit className="h-4 w-4" />
                     Update Status
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleSuggestSubjects(student)}
-                    className="gap-2"
-                  >
-                    <ClipboardList className="h-4 w-4" />
-                    Suggest Subjects
-                  </Button>
                 </div>
                 <div className="flex gap-2 mt-2">
                   <Badge className={student.corStatus === 'Updated' ? 'bg-green-100 text-green-700 border-0' : 'bg-orange-100 text-orange-700 border-0'}>
@@ -1687,6 +1657,133 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                   </Badge>
                 </div>
               </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+
+  const renderAccountRequestsContent = () => (
+    <div>
+      <Card className="border-0 shadow-lg">
+        <div className="p-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+            </div>
+          ) : accountRequests.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-12">No pending account requests</p>
+          ) : (
+            <div className="space-y-3">
+              {accountRequests.map((request, index) => (
+                <div key={index} className="p-4 border rounded-lg hover:bg-slate-50">
+                  <h4 className="text-slate-900 mb-2">{request.name}</h4>
+                  <p className="text-sm text-slate-500 mb-3">
+                    {request.id} • {request.studentType} • {request.email}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button 
+                      size="sm"
+                      variant="outline"
+                      className="gap-2"
+                      onClick={() => {
+                        setViewingProfile(request);
+                        setViewProfileOpen(true);
+                      }}
+                    >
+                      <Eye className="h-4 w-4" />
+                      View Profile
+                    </Button>
+                    {request.status === 'Pending' && (
+                      <>
+                    <Button 
+                      size="sm"
+                      style={{ backgroundColor: '#16a34a', color: 'white' }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#15803d'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#16a34a'}
+                      className="gap-2"
+                      onClick={() => {
+                        setConfirmData({
+                          title: 'Approve Account Request',
+                          message: `Are you sure you want to approve the account request for ${request.name}?`,
+                          onConfirm: async () => {
+                            try {
+                              setLoadingSection(`approve-${request.dbId}`);
+                              await adminService.approveAccountRequest(request.dbId);
+                              alert('Account request approved successfully');
+                              await fetchDashboardData();
+                            } catch (err: any) {
+                              alert(err.message || 'Failed to approve request');
+                            } finally {
+                              setLoadingSection(null);
+                            }
+                          },
+                          onCancel: () => {},
+                          isLoading: loadingSection === `approve-${request.dbId}`
+                        });
+                        setConfirmOpen(true);
+                      }}
+                    >
+                      <CheckIcon className="h-4 w-4" />
+                      Approve
+                    </Button>
+                    <Button 
+                      size="sm"
+                      variant="outline"
+                      className="text-red-600 hover:bg-red-50 border-red-200 gap-2"
+                      onClick={() => {
+                        setConfirmData({
+                          title: 'Reject Account Request',
+                          message: `Are you sure you want to reject the account request for ${request.name}?`,
+                          onConfirm: async () => {
+                            try {
+                              setLoadingSection(`reject-${request.dbId}`);
+                              await adminService.rejectAccountRequest(request.dbId);
+                              alert('Account request rejected');
+                              await fetchDashboardData();
+                            } catch (err: any) {
+                              alert(err.message || 'Failed to reject request');
+                            } finally {
+                              setLoadingSection(null);
+                            }
+                          },
+                          onCancel: () => {},
+                          isLoading: loadingSection === `reject-${request.dbId}`
+                        });
+                        setConfirmOpen(true);
+                      }}
+                    >
+                      <X className="h-4 w-4" />
+                      Reject
+                    </Button>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <Badge className={`border-0 ${
+                      request.status === 'Approved' 
+                        ? 'bg-green-100 text-green-700'
+                        : request.status === 'Rejected'
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                      Status: {request.status || 'Pending'}
+                    </Badge>
+                    <Badge className="bg-blue-100 text-blue-700 border-0">
+                      Type: {request.studentType}
+                    </Badge>
+                    {request.course && request.course !== 'N/A' && (
+                      <Badge className="bg-purple-100 text-purple-700 border-0">
+                        {request.course}
+                      </Badge>
+                    )}
+                  </div>
+                  {request.contactNumber && request.contactNumber !== 'N/A' && (
+                    <p className="text-xs text-slate-600 mt-2">Contact: {request.contactNumber}</p>
+                  )}
+                </div>
               ))}
             </div>
           )}
@@ -2622,27 +2719,15 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             </button>
             
             <button
-              onClick={() => setActiveSection('Transactions')}
+              onClick={() => setActiveSection('Account Requests')}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-                activeSection === 'Transactions' 
+                activeSection === 'Account Requests' 
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg' 
                   : 'text-slate-700 hover:bg-slate-100'
               }`}
             >
-              <CreditCard className="h-5 w-5" />
-              Full Payment Transactions
-            </button>
-
-            <button
-              onClick={() => setActiveSection('Installment Payments')}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-                activeSection === 'Installment Payments' 
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg' 
-                  : 'text-slate-700 hover:bg-slate-100'
-              }`}
-            >
-              <CreditCard className="h-5 w-5" />
-              Installment Payments
+              <UserPlus className="h-5 w-5" />
+              Account Requests
             </button>
 
             {/* Faculty moved into Manage submenu; no top-level Faculty button */}
@@ -2739,7 +2824,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 <h1 className="text-2xl mb-1">
                   {activeSection === 'Dashboard' && 'Admin Dashboard'}
                   {activeSection === 'Enrollment Request' && 'Enrollments'}
-                  {activeSection === 'Transactions' && 'Full Payment Transactions'}
                   {activeSection === 'Manage Students' && 'Manage Students'}
                   {activeSection === 'Manage Teachers' && 'Manage Teachers'}
                   {activeSection === 'Manage Faculty' && 'Manage Faculty'}
@@ -2766,8 +2850,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {/* Dynamic Content */}
             {activeSection === 'Dashboard' && renderDashboardContent()}
             {activeSection === 'Enrollment Request' && renderEnrollmentRequestsContent()}
-            {activeSection === 'Transactions' && renderTransactionsContent()}
-            {activeSection === 'Installment Payments' && renderInstallmentPaymentsContent()}
+            {activeSection === 'Account Requests' && renderAccountRequestsContent()}
             {activeSection === 'Manage Students' && renderManageStudentsContent()}
             {activeSection === 'Manage Teachers' && renderManageFacultyContent()}
             {activeSection === 'Manage Faculty' && renderManageFacultyContent()}
@@ -2780,7 +2863,181 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
             {activeSection === 'Manage Forms' && renderManageFormsContent()}
           </div>
         </div>
-      </div>
+
+        {/* View Account Profile Dialog */}
+      <Dialog open={viewProfileOpen} onOpenChange={setViewProfileOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Student Profile</DialogTitle>
+          </DialogHeader>
+          {viewingProfile && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-slate-600">First Name</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.first_name || 'N/A'}</p>
+                </div>
+                <div>
+                  <Label className="text-slate-600">Last Name</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.last_name || 'N/A'}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-slate-600">Student No.</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.id}</p>
+                </div>
+                <div>
+                  <Label className="text-slate-600">Email</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.email || 'N/A'}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-slate-600">Contact Number</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.contactNumber || 'N/A'}</p>
+                </div>
+                <div>
+                  <Label className="text-slate-600">Student Type</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.studentType}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-slate-600">Course</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.course || 'N/A'}</p>
+                </div>
+                <div>
+                  <Label className="text-slate-600">Year Level</Label>
+                  <p className="mt-1 text-sm">{viewingProfile.year || 'N/A'}</p>
+                </div>
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end gap-2 mt-6">
+            <Button variant="outline" onClick={() => setViewProfileOpen(false)}>Close</Button>
+            <Button 
+              className="gap-2"
+              onClick={() => {
+                setViewProfileOpen(false);
+                setEditingAccountRequest(viewingProfile);
+                setEditAccountForm({ student_id: viewingProfile.id });
+                setEditAccountOpen(true);
+              }}
+            >
+              <Edit className="h-4 w-4" />
+              Edit
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Account Student ID Dialog */}
+      <Dialog open={editAccountOpen} onOpenChange={setEditAccountOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Student No.</DialogTitle>
+          </DialogHeader>
+          {editingAccountRequest && (
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                setLoadingSection('edit-account');
+                // Update the student record with new student_id and username
+                await adminService.updateStudent(editingAccountRequest.dbId, {
+                  student_id: editAccountForm.student_id,
+                  username: editAccountForm.student_id
+                });
+                alert('Student number and login updated successfully');
+                setEditAccountOpen(false);
+                await fetchDashboardData();
+              } catch (err: any) {
+                alert(err.message || 'Failed to update student number');
+              } finally {
+                setLoadingSection(null);
+              }
+            }} className="space-y-4">
+              <div>
+                <Label htmlFor="edit-student-id">Student No.</Label>
+                <Input
+                  id="edit-student-id"
+                  value={editAccountForm.student_id}
+                  onChange={(e) => setEditAccountForm({ ...editAccountForm, student_id: e.target.value })}
+                  className="mt-2"
+                  required
+                />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2 pt-4">
+                <Button variant="outline" onClick={() => setEditAccountOpen(false)}>Cancel</Button>
+                <Button type="submit" disabled={loadingSection === 'edit-account'}>
+                  {loadingSection === 'edit-account' ? 'Saving...' : 'Save'}
+                </Button>
+                <Button 
+                  type="button"
+                  style={{ backgroundColor: '#16a34a', color: 'white' }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#15803d'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#16a34a'}
+                  disabled={loadingSection === 'approve-account'}
+                  onClick={async () => {
+                    try {
+                      setLoadingSection('approve-account');
+                      // First update student_id and username
+                      await adminService.updateStudent(editingAccountRequest.dbId, {
+                        student_id: editAccountForm.student_id,
+                        username: editAccountForm.student_id
+                      });
+                      // Then approve the account
+                      await adminService.approveAccountRequest(editingAccountRequest.dbId);
+                      alert('Student number updated and account approved successfully');
+                      setEditAccountOpen(false);
+                      await fetchDashboardData();
+                    } catch (err: any) {
+                      alert(err.message || 'Failed to update and approve');
+                    } finally {
+                      setLoadingSection(null);
+                    }
+                  }}
+                >
+                  {loadingSection === 'approve-account' ? 'Approving...' : 'Save & Approve'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmation Dialog */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmData.title}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmData.message}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel 
+              onClick={() => {
+                setConfirmOpen(false);
+                confirmData.onCancel?.();
+              }}
+              disabled={confirmData.isLoading}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={async () => {
+                await confirmData.onConfirm?.();
+                setConfirmOpen(false);
+              }}
+              disabled={confirmData.isLoading}
+              style={{ backgroundColor: '#2563eb', color: 'white' }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1d4ed8'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2563eb'}
+            >
+              {confirmData.isLoading ? 'Processing...' : 'Confirm'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Preview Dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
@@ -3190,53 +3447,75 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
       <Dialog open={updateStudentOpen} onOpenChange={setUpdateStudentOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Update Student Status</DialogTitle>
+            <DialogTitle>View Student Details</DialogTitle>
             <DialogDescription>
-              Update COR status, grades completion, and clearance for {selectedStudent?.name}
+              Personal information for {selectedStudent?.name}
             </DialogDescription>
           </DialogHeader>
           
           {selectedStudent && (
             <div className="space-y-4">
               <div>
-                <Label htmlFor="cor-status">COR Status</Label>
-                <Select value={studentStatusForm.corStatus} onValueChange={(value) => setStudentStatusForm({ ...studentStatusForm, corStatus: value })}>
-                  <SelectTrigger id="cor-status" className="mt-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Updated">Updated</SelectItem>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="Not Submitted">Not Submitted</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Full Name</Label>
+                <Input 
+                  className="mt-2"
+                  value={selectedStudent?.name || ''}
+                  onChange={(e) => setSelectedStudent({...selectedStudent, name: e.target.value})}
+                />
               </div>
 
               <div>
-                <Label htmlFor="grades-complete">Grades Status</Label>
-                <Select value={studentStatusForm.gradesComplete} onValueChange={(value) => setStudentStatusForm({ ...studentStatusForm, gradesComplete: value })}>
-                  <SelectTrigger id="grades-complete" className="mt-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Complete">Complete</SelectItem>
-                    <SelectItem value="Incomplete">Incomplete</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Student ID</Label>
+                <div className="mt-2 p-2 bg-slate-50 rounded border">{selectedStudent?.id || 'N/A'}</div>
               </div>
 
               <div>
-                <Label htmlFor="clearance-status">Clearance Status</Label>
-                <Select value={studentStatusForm.clearanceStatus} onValueChange={(value) => setStudentStatusForm({ ...studentStatusForm, clearanceStatus: value })}>
-                  <SelectTrigger id="clearance-status" className="mt-2">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Clear">Clear</SelectItem>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="With Issues">With Issues</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Email</Label>
+                <Input 
+                  className="mt-2"
+                  type="email"
+                  value={selectedStudent?.email || ''}
+                  onChange={(e) => setSelectedStudent({...selectedStudent, email: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <Label>Contact Number</Label>
+                <Input 
+                  className="mt-2"
+                  value={selectedStudent?.contactNumber || selectedStudent?.contact_number || ''}
+                  onChange={(e) => setSelectedStudent({...selectedStudent, contactNumber: e.target.value, contact_number: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <Label>Course</Label>
+                <Input 
+                  className="mt-2"
+                  value={selectedStudent?.course || ''}
+                  onChange={(e) => setSelectedStudent({...selectedStudent, course: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <Label>Year Level</Label>
+                <Input 
+                  className="mt-2"
+                  type="number"
+                  min="1"
+                  max="4"
+                  value={selectedStudent?.year || ''}
+                  onChange={(e) => setSelectedStudent({...selectedStudent, year: e.target.value})}
+                />
+              </div>
+
+              <div>
+                <Label>Student Type</Label>
+                <Input 
+                  className="mt-2"
+                  value={selectedStudent?.studentType || ''}
+                  onChange={(e) => setSelectedStudent({...selectedStudent, studentType: e.target.value})}
+                />
               </div>
 
               <div className="flex gap-2 justify-end border-t pt-4">
@@ -3245,16 +3524,43 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
                 </Button>
                 <Button 
                   className="bg-gradient-to-r from-blue-600 to-indigo-600"
-                  onClick={handleSaveStudentStatus}
-                  disabled={loadingSection === 'update-student-status'}
+                  onClick={async () => {
+                    try {
+                      setLoadingSection('update-student-details');
+                      // Use the student's id for the update
+                      const studentId = selectedStudent?.id || selectedStudent?.student_id;
+                      if (!studentId) {
+                        alert('Student ID not found');
+                        return;
+                      }
+                      await adminService.updateStudent(studentId, {
+                        first_name: selectedStudent?.first_name || selectedStudent?.name?.split(' ')[0],
+                        last_name: selectedStudent?.last_name || selectedStudent?.name?.split(' ')[1] || '',
+                        email: selectedStudent?.email,
+                        contact_number: selectedStudent?.contactNumber || selectedStudent?.contact_number,
+                        course: selectedStudent?.course,
+                        year_level: parseInt(selectedStudent?.year) || 1,
+                        student_type: selectedStudent?.studentType,
+                        username: selectedStudent?.id || selectedStudent?.student_id
+                      });
+                      alert('Student details updated successfully');
+                      setUpdateStudentOpen(false);
+                      await fetchDashboardData();
+                    } catch (err: any) {
+                      alert(err.message || 'Failed to update student details');
+                    } finally {
+                      setLoadingSection(null);
+                    }
+                  }}
+                  disabled={loadingSection === 'update-student-details'}
                 >
-                  {loadingSection === 'update-student-status' ? (
+                  {loadingSection === 'update-student-details' ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      Updating...
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
                     </>
                   ) : (
-                    'Update Status'
+                    'Save Changes'
                   )}
                 </Button>
               </div>
@@ -4625,42 +4931,6 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
         </DialogContent>
       </Dialog>
 
-      {/* Suggest Subjects Dialog */}
-      <Dialog open={suggestOpen} onOpenChange={setSuggestOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Suggested Subjects</DialogTitle>
-            <DialogDescription>
-              Suggested subjects for {suggestStudent?.first_name || suggestStudent?.name || suggestStudent?.student_id}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            {suggestedSubjects.length === 0 ? (
-              <p className="text-sm text-slate-500">No suggestions available</p>
-            ) : (
-              <div className="grid grid-cols-1 gap-2">
-                {suggestedSubjects.map((s: any) => (
-                  <div key={s.id} className="p-3 border rounded">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">{s.subject_code} — {s.subject_name}</p>
-                        <p className="text-xs text-slate-500">Units: {s.units} • {s.course} • Year {s.year_level}</p>
-                      </div>
-                      <div>
-                        <Button size="sm" onClick={() => handleAddSuggestedSubject(s)}>Add</Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="flex gap-2 justify-end mt-4">
-            <Button variant="outline" onClick={() => setSuggestOpen(false)}>Close</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
       {/* Edit Subject Dialog */}
       <Dialog open={editSubjectOpen} onOpenChange={setEditSubjectOpen}>
         <DialogContent>
@@ -4924,6 +5194,7 @@ export default function AdminDashboard({ onLogout }: AdminDashboardProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
     </div>
   );
 }

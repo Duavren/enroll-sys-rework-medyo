@@ -2,6 +2,34 @@ import { Response } from 'express';
 import { query, run, get } from '../database/connection';
 import { AuthRequest } from '../middleware/auth.middleware';
 
+// Helper: get fee rates for a course from courses_fees table, with safe defaults
+const getCourseFeeRates = async (course: string) => {
+  const defaults = { tuition_per_unit: 700, registration: 1500, library: 500, lab: 2000, id_fee: 200, others: 300 };
+  if (!course) return defaults;
+  try {
+    const row = await get(
+      'SELECT tuition_per_unit, registration, library, lab, id_fee, others FROM courses_fees WHERE course = ?',
+      [course]
+    );
+    return row ? { ...defaults, ...row } : defaults;
+  } catch {
+    return defaults;
+  }
+};
+
+// Helper: get student's course from enrollment id
+const getEnrollmentCourse = async (enrollmentId: number | string): Promise<string> => {
+  try {
+    const row = await get(
+      `SELECT s.course FROM enrollments e JOIN students s ON e.student_id = s.id WHERE e.id = ?`,
+      [enrollmentId]
+    );
+    return row?.course || '';
+  } catch {
+    return '';
+  }
+};
+
 const resolveStudentId = async (userId?: number) => {
   if (userId) {
     const students = await query('SELECT id FROM students WHERE user_id = ?', [userId]);
@@ -259,14 +287,19 @@ export const addSubjectToEnrollment = async (req: AuthRequest, res: Response) =>
 
     const totalUnits = subjects[0]?.total_units || 0;
     
+    // Get course fee rates from courses_fees table
+    const course = await getEnrollmentCourse(id);
+    const feeRates = await getCourseFeeRates(course);
+    const perUnit = feeRates.tuition_per_unit;
+    
     // Get current enrollment to preserve assessment fees
     const currentEnrollment = await query(
       'SELECT total_amount, assessed_at FROM enrollments WHERE id = ?',
       [id]
     );
     
-    // Calculate subject fees at 700 PHP per unit
-    const subjectFees = totalUnits * 700;
+    // Calculate subject fees using dynamic per-unit rate
+    const subjectFees = totalUnits * perUnit;
     
     // Determine total amount: assessment fees + subject fees
     let totalAmount = subjectFees;
@@ -284,7 +317,7 @@ export const addSubjectToEnrollment = async (req: AuthRequest, res: Response) =>
         // Not first subject, need to extract assessment fees
         // Previous units before this addition
         const prevUnits = totalUnits - addedSubjectUnits;
-        const prevSubjectFees = prevUnits * 700;
+        const prevSubjectFees = prevUnits * perUnit;
         const assessmentFees = currentTotal - prevSubjectFees;
         totalAmount = assessmentFees + subjectFees;
       }
@@ -364,8 +397,13 @@ export const removeSubjectFromEnrollment = async (req: AuthRequest, res: Respons
       [id]
     );
     
-    // Calculate subject fees at 700 PHP per unit (after removal)
-    const subjectFees = totalUnits * 700;
+    // Get course fee rates from courses_fees table
+    const course = await getEnrollmentCourse(id);
+    const feeRates = await getCourseFeeRates(course);
+    const perUnit = feeRates.tuition_per_unit;
+    
+    // Calculate subject fees using dynamic per-unit rate (after removal)
+    const subjectFees = totalUnits * perUnit;
     
     // Determine total amount: assessment fees + subject fees
     let totalAmount = subjectFees;
@@ -376,7 +414,7 @@ export const removeSubjectFromEnrollment = async (req: AuthRequest, res: Respons
       
       // Previous units before removal = current units + removed units
       const prevUnits = totalUnits + removedSubjectUnits;
-      const prevSubjectFees = prevUnits * 700;
+      const prevSubjectFees = prevUnits * perUnit;
       
       // Extract assessment fees: current_total - previous_subject_fees
       const assessmentFees = currentTotal - prevSubjectFees;
@@ -483,7 +521,11 @@ export const assessEnrollment = async (req: AuthRequest, res: Response) => {
       [id]
     );
     const currentUnits = currentSubjects[0]?.total_units || 0;
-    const currentSubjectFees = currentUnits * 700; // 700 PHP per unit
+    
+    // Get course fee rates from courses_fees table
+    const course = await getEnrollmentCourse(id);
+    const feeRates = await getCourseFeeRates(course);
+    const currentSubjectFees = currentUnits * feeRates.tuition_per_unit;
     
     // Total amount = assessment fees + subject fees (if any)
     const totalAmount = assessmentFees + currentSubjectFees;
@@ -636,7 +678,11 @@ export const submitSubjects = async (req: AuthRequest, res: Response) => {
     );
 
     const totalUnits = subjTotals[0]?.total_units || 0;
-    const subjectFees = totalUnits * 700; // 700 PHP per unit
+    
+    // Get course fee rates from courses_fees table
+    const course = await getEnrollmentCourse(id);
+    const feeRates = await getCourseFeeRates(course);
+    const subjectFees = totalUnits * feeRates.tuition_per_unit;
     const totalAmount = (enrollments[0].total_amount || 0) + subjectFees;
 
     await run(

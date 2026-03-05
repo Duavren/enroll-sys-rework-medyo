@@ -66,6 +66,36 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
   const [feeForm, setFeeForm] = useState({ tuition: 0, registration: 0, library: 0, lab: 0, id_fee: 0, others: 0, remarks: '' });
   const [rejectEnrollmentId, setRejectEnrollmentId] = useState<number | null>(null);
   const [rejectEnrollmentReason, setRejectEnrollmentReason] = useState('');
+  const [loadingFees, setLoadingFees] = useState(false);
+  const [allCourseFees, setAllCourseFees] = useState<any[]>([]);
+  const [selectedCourseForEdit, setSelectedCourseForEdit] = useState<string | null>(null);
+  const [editingFees, setEditingFees] = useState(false);
+  const [feeError, setFeeError] = useState('');
+  const [currentFeeData, setCurrentFeeData] = useState({ course: '', tuition_per_unit: 700, registration: 1500, library: 500, lab: 2000, id_fee: 200, others: 300 });
+
+  const loadFees = async () => {
+    try {
+      setLoadingFees(true);
+      setFeeError('');
+      const result = await cashierService.getFees();
+      const fees = Array.isArray(result) ? result : (result?.data || []);
+      if (fees.length > 0) {
+        setAllCourseFees(fees);
+        // Always select first course if none selected, or re-select current
+        const targetCourse = selectedCourseForEdit || fees[0].course;
+        const found = fees.find((f: any) => f.course === targetCourse) || fees[0];
+        setSelectedCourseForEdit(found.course);
+        setCurrentFeeData(found);
+      } else {
+        setFeeError('No course fees found. Please run database setup first.');
+      }
+    } catch (err: any) {
+      console.error('Failed loading fees', err);
+      setFeeError(err.message || 'Failed to load fee data from server');
+    } finally {
+      setLoadingFees(false);
+    }
+  };
 
   const loadTransactions = async () => {
     try {
@@ -164,7 +194,16 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
     return () => { mounted = false; };
   }, [activeSection]);
 
+  // Load predefined fees
+  useEffect(() => {
+    if (activeSection === 'Fee Management') {
+      loadFees();
+    }
+  }, [activeSection]);
+
   const handleProcess = async (txId: number, action: 'complete' | 'reject') => {
+    const actionLabel = action === 'complete' ? 'approve' : 'reject';
+    if (!window.confirm(`Are you sure you want to ${actionLabel} this transaction?`)) return;
     try {
       setLoading(true);
       await cashierService.process(txId, action, action === 'reject' ? 'Rejected by cashier' : 'Processed by cashier');
@@ -221,6 +260,7 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
     { name: 'Enrollment Review', icon: ClipboardList },
     { name: 'Tuition Assessments', icon: FileText },
     { name: 'Pending Verifications', icon: Clock },
+    { name: 'Fee Management', icon: Edit },
     { name: 'Transaction Logs', icon: FileText },
   ];
 
@@ -595,6 +635,7 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
     };
 
     const handleApproveReview = async (enrollmentId: number) => {
+      if (!window.confirm('Are you sure you want to approve and forward this enrollment to the Dean?')) return;
       try {
         setLoadingReviews(true);
         await cashierService.approveEnrollmentReview(enrollmentId);
@@ -609,6 +650,7 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
     };
 
     const handleRejectReview = async (enrollmentId: number) => {
+      if (!window.confirm('Are you sure you want to reject this enrollment?')) return;
       try {
         setLoadingReviews(true);
         await cashierService.rejectEnrollmentReview(enrollmentId, rejectEnrollmentReason);
@@ -1125,6 +1167,286 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
     );
   };
 
+  const renderFeeManagementContent = () => {
+    if (loadingFees) {
+      return (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        </div>
+      );
+    }
+
+    if (feeError) {
+      return (
+        <Card className="border-0 shadow-lg">
+          <div className="p-6 text-center">
+            <p className="text-red-600 font-medium mb-4">{feeError}</p>
+            <Button onClick={loadFees} variant="outline">
+              Retry Loading Fees
+            </Button>
+          </div>
+        </Card>
+      );
+    }
+
+    if (allCourseFees.length === 0) {
+      return (
+        <Card className="border-0 shadow-lg">
+          <div className="p-6 text-center">
+            <p className="text-slate-600 mb-4">No course fees configured yet. Please run database setup.</p>
+            <Button onClick={loadFees} variant="outline">
+              Retry
+            </Button>
+          </div>
+        </Card>
+      );
+    }
+
+    const handleSaveFees = async () => {
+      try {
+        await cashierService.updateFees(currentFeeData);
+        alert('Fee structure updated successfully');
+        setEditingFees(false);
+        await loadFees();
+      } catch (err: any) {
+        alert(err.message || 'Failed to update fees');
+      }
+    };
+
+    const handleSelectCourse = (courseName: string) => {
+      const course = allCourseFees.find(f => f.course === courseName);
+      if (course) {
+        setSelectedCourseForEdit(courseName);
+        setCurrentFeeData(course);
+        setEditingFees(false);
+      }
+    };
+
+    return (
+      <div className="space-y-6">
+        {/* Course Selection */}
+        <Card className="border-0 shadow-lg">
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4">
+            <h3 className="text-white font-medium text-lg">Select Course to Edit Fees</h3>
+            <p className="text-blue-100 text-sm">Choose a course to manage its fee structure</p>
+          </div>
+          
+          <div className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {allCourseFees.map((fee) => (
+                <Button
+                  key={fee.course}
+                  onClick={() => handleSelectCourse(fee.course)}
+                  variant={selectedCourseForEdit === fee.course ? 'default' : 'outline'}
+                  className={`flex flex-col items-start p-3 h-auto ${
+                    selectedCourseForEdit === fee.course
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0'
+                      : ''
+                  }`}
+                >
+                  <span className="font-semibold text-sm">{fee.course}</span>
+                  <span className="text-xs mt-1 opacity-80">₱{fee.tuition_per_unit}/unit</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        {/* Fee Details */}
+        <Card className="border-0 shadow-lg">
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-6 py-4">
+            <h3 className="text-white font-medium text-lg">Fee Structure for {selectedCourseForEdit || 'N/A'}</h3>
+            <p className="text-blue-100 text-sm">Configure tuition per unit and other fees for this course</p>
+          </div>
+          
+          <div className="p-6">
+            {!editingFees ? (
+              <>
+                {/* Display Mode */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                    <p className="text-sm text-slate-600 mb-2">Tuition Fee (Per Unit)</p>
+                    <p className="text-3xl font-bold text-blue-600">₱{currentFeeData.tuition_per_unit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                    <p className="text-xs text-slate-500 mt-2">Applied based on total enrolled units</p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <p className="text-sm text-slate-600 mb-2">Registration Fee</p>
+                    <p className="text-2xl font-bold text-blue-600">₱{currentFeeData.registration.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <p className="text-sm text-slate-600 mb-2">Library Fee</p>
+                    <p className="text-2xl font-bold text-blue-600">₱{currentFeeData.library.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <p className="text-sm text-slate-600 mb-2">Laboratory Fee</p>
+                    <p className="text-2xl font-bold text-blue-600">₱{currentFeeData.lab.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <p className="text-sm text-slate-600 mb-2">ID Fee</p>
+                    <p className="text-2xl font-bold text-blue-600">₱{currentFeeData.id_fee.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <p className="text-sm text-slate-600 mb-2">Other Fees</p>
+                    <p className="text-2xl font-bold text-blue-600">₱{currentFeeData.others.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                  </div>
+                </div>
+
+                {/* Example Calculation */}
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 mb-6 border border-amber-200">
+                  <p className="text-sm font-medium text-slate-700 mb-3">Example Fee Calculation for {selectedCourseForEdit}</p>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Student enrolls in 18 units</span>
+                      <span className="font-semibold">18 units</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Tuition (₱{currentFeeData.tuition_per_unit}/unit × 18)</span>
+                      <span className="font-semibold">₱{(currentFeeData.tuition_per_unit * 18).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="border-t border-amber-200 pt-2 mt-2 flex justify-between">
+                      <span className="text-slate-600">Fixed fees (Registration + Library + Lab + ID + Others)</span>
+                      <span className="font-semibold">₱{(currentFeeData.registration + currentFeeData.library + currentFeeData.lab + currentFeeData.id_fee + currentFeeData.others).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-lg text-orange-700 border-t border-amber-300 pt-2 mt-2">
+                      <span>Total (for 18 units)</span>
+                      <span>₱{(currentFeeData.tuition_per_unit * 18 + currentFeeData.registration + currentFeeData.library + currentFeeData.lab + currentFeeData.id_fee + currentFeeData.others).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <Button 
+                  onClick={() => setEditingFees(true)}
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:shadow-lg"
+                >
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Fee Structure
+                </Button>
+              </>
+            ) : (
+              <>
+                {/* Edit Mode */}
+                <div className="space-y-4 mb-6">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Tuition Fee per Unit (₱)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={currentFeeData.tuition_per_unit}
+                      onChange={(e) => setCurrentFeeData({ ...currentFeeData, tuition_per_unit: parseFloat(e.target.value) || 0 })}
+                      className="w-full"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">This amount will be multiplied by the number of units enrolled</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Registration Fee (₱)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={currentFeeData.registration}
+                      onChange={(e) => setCurrentFeeData({ ...currentFeeData, registration: parseFloat(e.target.value) || 0 })}
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Library Fee (₱)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={currentFeeData.library}
+                      onChange={(e) => setCurrentFeeData({ ...currentFeeData, library: parseFloat(e.target.value) || 0 })}
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Laboratory Fee (₱)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={currentFeeData.lab}
+                      onChange={(e) => setCurrentFeeData({ ...currentFeeData, lab: parseFloat(e.target.value) || 0 })}
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">ID Fee (₱)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={currentFeeData.id_fee}
+                      onChange={(e) => setCurrentFeeData({ ...currentFeeData, id_fee: parseFloat(e.target.value) || 0 })}
+                      className="w-full"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Other Fees (₱)</label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={currentFeeData.others}
+                      onChange={(e) => setCurrentFeeData({ ...currentFeeData, others: parseFloat(e.target.value) || 0 })}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+
+                {/* Updated Example Calculation */}
+                <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg p-4 mb-6 border border-amber-200">
+                  <p className="text-sm font-medium text-slate-700 mb-3">Example with New Rates (18 units)</p>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Tuition (₱{currentFeeData.tuition_per_unit}/unit × 18)</span>
+                      <span className="font-semibold">₱{(currentFeeData.tuition_per_unit * 18).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between text-orange-700 border-t border-amber-300 pt-2 mt-2">
+                      <span className="font-bold">Total Fixed Fees</span>
+                      <span className="font-bold">₱{(currentFeeData.registration + currentFeeData.library + currentFeeData.lab + currentFeeData.id_fee + currentFeeData.others).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-lg text-orange-700 border-t border-amber-300 pt-2 mt-2">
+                      <span>New Total</span>
+                      <span>₱{(currentFeeData.tuition_per_unit * 18 + currentFeeData.registration + currentFeeData.library + currentFeeData.lab + currentFeeData.id_fee + currentFeeData.others).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex gap-3">
+                  <Button 
+                    onClick={() => {
+                      setEditingFees(false);
+                      loadFees(); // Reload to discard changes
+                    }}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                  <Button 
+                    onClick={handleSaveFees}
+                    className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:shadow-lg"
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Changes
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </Card>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 p-6">
       <div className="max-w-[1600px] mx-auto">
@@ -1200,6 +1522,7 @@ export default function CashierDashboard({ onLogout }: CashierDashboardProps) {
             {activeSection === 'Enrollment Review' && renderEnrollmentReviewContent()}
             {activeSection === 'Tuition Assessments' && renderTuitionAssessmentsContent()}
             {activeSection === 'Pending Verifications' && renderPendingVerificationsContent()}
+            {activeSection === 'Fee Management' && renderFeeManagementContent()}
             {activeSection === 'Transaction Logs' && renderTransactionsContent()}
           </div>
         </div>

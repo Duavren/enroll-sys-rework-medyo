@@ -92,40 +92,22 @@ export const login = async (req: Request, res: Response) => {
 
 export const register = async (req: Request, res: Response) => {
   try {
-    const { username, password, email, role = 'student', student } = req.body;
+    let { username, password, email, role = 'student', student } = req.body;
 
-    if (!username || !password) {
+    if (!password) {
       return res.status(400).json({
         success: false,
-        message: 'Username and password are required'
+        message: 'Password is required'
       });
     }
 
-    // Check if user already exists
-    const existingUsers = await query(
-      'SELECT id FROM users WHERE username = ?',
-      [username]
-    );
-
-    if (existingUsers.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Username already exists'
-      });
-    }
-
-    // Hash password
+    // Hash password first
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert user
-    const result = await run(
-      'INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)',
-      [username, hashedPassword, email, role]
-    );
+    // If role is student, we'll generate a unique username if not provided
+    let finalUsername = username || null;
+    let finalStudentId = null;
 
-    const userId = result.lastInsertRowid;
-
-    // If role is student and student details provided, create student record and link
     if (role === 'student' && student && typeof student === 'object') {
       const {
         student_id,
@@ -143,7 +125,7 @@ export const register = async (req: Request, res: Response) => {
       } = student as any;
 
       // Auto-generate student_id when not provided in format YYYY-xxxx (4 digits)
-      let finalStudentId = student_id || null;
+      finalStudentId = student_id || null;
       if (!finalStudentId) {
         const year = new Date().getFullYear();
         const prefix = String(year);
@@ -165,11 +147,90 @@ export const register = async (req: Request, res: Response) => {
         }
       }
 
+      // Generate unique username if not provided
+      if (!finalUsername) {
+        // Use student_id with a random suffix to ensure uniqueness
+        const randomSuffix = Math.floor(Math.random() * 1000);
+        finalUsername = `${finalStudentId}-${randomSuffix}`;
+        
+        // Check if this username exists and regenerate if needed
+        let attempts = 0;
+        while (attempts < 5) {
+          const existingUsers = await query(
+            'SELECT id FROM users WHERE username = ?',
+            [finalUsername]
+          );
+          if (existingUsers.length === 0) break;
+          
+          const newSuffix = Math.floor(Math.random() * 1000);
+          finalUsername = `${finalStudentId}-${newSuffix}`;
+          attempts++;
+        }
+      } else {
+        // Check if provided username already exists
+        const existingUsers = await query(
+          'SELECT id FROM users WHERE username = ?',
+          [finalUsername]
+        );
+        if (existingUsers.length > 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Username already exists'
+          });
+        }
+      }
+    } else {
+      // For non-student roles, username is required
+      if (!finalUsername) {
+        return res.status(400).json({
+          success: false,
+          message: 'Username is required'
+        });
+      }
+
+      // Check if user already exists
+      const existingUsers = await query(
+        'SELECT id FROM users WHERE username = ?',
+        [finalUsername]
+      );
+
+      if (existingUsers.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Username already exists'
+        });
+      }
+    }
+
+    // Insert user
+    const result = await run(
+      'INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)',
+      [finalUsername, hashedPassword, email, role]
+    );
+
+    const userId = result.lastInsertRowid;
+
+    // If role is student and student details provided, create student record and link
+    if (role === 'student' && student && typeof student === 'object') {
+      const {
+        first_name,
+        middle_name,
+        last_name,
+        suffix,
+        student_type,
+        course,
+        year_level,
+        contact_number,
+        address,
+        birth_date,
+        gender
+      } = student as any;
+
       await run(
         `INSERT INTO students (
           user_id, student_id, first_name, middle_name, last_name, suffix,
           student_type, course, year_level, contact_number, address, birth_date, gender, status, cor_status, clearance_status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', 'Pending', 'Pending')`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', 'Pending', 'Pending')`,
         [userId, finalStudentId, first_name || null, middle_name || null, last_name || null, suffix || null,
           student_type ? (student_type.charAt(0).toUpperCase() + student_type.slice(1).toLowerCase()) : 'New', course || null, year_level || null, contact_number || null, address || null, birth_date || null, gender || null]
       );
@@ -180,15 +241,30 @@ export const register = async (req: Request, res: Response) => {
       message: 'User registered successfully',
       data: {
         id: result.lastInsertRowid,
-        username,
+        username: finalUsername,
         role
       }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Register error:', error);
+    
+    // Handle specific database constraint errors
+    if (error.message && error.message.includes('UNIQUE constraint failed: users.username')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Username already exists'
+      });
+    }
+    if (error.message && error.message.includes('UNIQUE constraint failed: students.student_id')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Student ID already exists'
+      });
+    }
+    
     res.status(500).json({
       success: false,
-      message: 'Server error'
+      message: 'Server error: ' + (error.message || 'Unknown error')
     });
   }
 };

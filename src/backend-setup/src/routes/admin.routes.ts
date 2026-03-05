@@ -10,7 +10,10 @@ import {
   getEnrollmentDocuments,
   downloadEnrollmentDocument,
   updateEnrollmentStatus,
-  getDashboardStats
+  getDashboardStats,
+  getPendingAccountRequests,
+  approveAccountRequest,
+  rejectAccountRequest
 } from '../controllers/admin.controller';
 import {
   getAllFaculty,
@@ -33,6 +36,11 @@ router.get('/students/:id', authenticate, authorize('admin', 'superadmin', 'dean
 router.post('/students', authenticate, authorize('admin', 'superadmin'), createStudent);
 router.put('/students/:id', authenticate, authorize('admin', 'superadmin', 'registrar'), updateStudent);
 router.delete('/students/:id', authenticate, authorize('superadmin'), deleteStudent);
+
+// Account Requests
+router.get('/account-requests', authenticate, authorize('admin', 'superadmin'), getPendingAccountRequests);
+router.put('/account-requests/:id/approve', authenticate, authorize('admin', 'superadmin'), approveAccountRequest);
+router.put('/account-requests/:id/reject', authenticate, authorize('admin', 'superadmin'), rejectAccountRequest);
 
 // Teachers (Faculty)
 router.get('/teachers', authenticate, authorize('admin', 'superadmin'), getAllFaculty);

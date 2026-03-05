@@ -182,6 +182,10 @@ export const updateStudent = async (req: AuthRequest, res: Response) => {
     const updateFields: string[] = [];
     const values: any[] = [];
 
+    if (updateData.student_id !== undefined) {
+      updateFields.push('student_id = ?');
+      values.push(updateData.student_id);
+    }
     if (updateData.first_name !== undefined) {
       updateFields.push('first_name = ?');
       values.push(updateData.first_name);
@@ -243,6 +247,36 @@ export const updateStudent = async (req: AuthRequest, res: Response) => {
     if (updateData.clearance_status !== undefined) {
       updateFields.push('clearance_status = ?');
       values.push(updateData.clearance_status);
+    }
+    
+    // Requirement status fields for New students
+    if (updateData.form137_status !== undefined) {
+      updateFields.push('form137_status = ?');
+      values.push(updateData.form137_status);
+    }
+    if (updateData.form138_status !== undefined) {
+      updateFields.push('form138_status = ?');
+      values.push(updateData.form138_status);
+    }
+    
+    // Requirement status fields for Transferee students
+    if (updateData.tor_status !== undefined) {
+      updateFields.push('tor_status = ?');
+      values.push(updateData.tor_status);
+    }
+    if (updateData.certificate_transfer_status !== undefined) {
+      updateFields.push('certificate_transfer_status = ?');
+      values.push(updateData.certificate_transfer_status);
+    }
+    
+    // Common requirement status fields for all types
+    if (updateData.birth_certificate_status !== undefined) {
+      updateFields.push('birth_certificate_status = ?');
+      values.push(updateData.birth_certificate_status);
+    }
+    if (updateData.moral_certificate_status !== undefined) {
+      updateFields.push('moral_certificate_status = ?');
+      values.push(updateData.moral_certificate_status);
     }
 
     // Always update updated_at
@@ -595,5 +629,91 @@ export const downloadEnrollmentDocument = async (req: AuthRequest, res: Response
   } catch (error) {
     console.error('Download document error:', error);
     res.status(500).send('Server error');
+  }
+};
+
+export const getPendingAccountRequests = async (req: AuthRequest, res: Response) => {
+  try {
+    const students = await query(
+      `SELECT s.*, u.username, u.email 
+       FROM students s
+       LEFT JOIN users u ON s.user_id = u.id
+       WHERE s.status = 'Pending'
+       ORDER BY s.created_at DESC`
+    );
+
+    res.json({
+      success: true,
+      data: students
+    });
+  } catch (error) {
+    console.error('Get pending account requests error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+export const approveAccountRequest = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Get the student
+    const students = await query('SELECT * FROM students WHERE id = ?', [id]);
+    if (students.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student not found'
+      });
+    }
+
+    // Update status to Active
+    await run('UPDATE students SET status = ? WHERE id = ?', ['Active', id]);
+
+    res.json({
+      success: true,
+      message: 'Account request approved',
+      data: { id, status: 'Active' }
+    });
+  } catch (error) {
+    console.error('Approve account request error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+};
+
+export const rejectAccountRequest = async (req: AuthRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    // Get the student
+    const students = await query('SELECT * FROM students WHERE id = ?', [id]);
+    if (students.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Student not found'
+      });
+    }
+
+    const student = students[0];
+
+    // Update status to Inactive (rejected)
+    await run('UPDATE students SET status = ? WHERE id = ?', ['Inactive', id]);
+
+    res.json({
+      success: true,
+      message: 'Account request rejected',
+      data: { id, status: 'Inactive', reason }
+    });
+  } catch (error) {
+    console.error('Reject account request error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
   }
 };

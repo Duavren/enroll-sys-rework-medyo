@@ -44,6 +44,8 @@ class StudentService {
     birth_date?: string;
     gender?: string;
     username?: string;
+    course?: string;
+    year_level?: number;
   }): Promise<any> {
     try {
       const response = await api.put('/students/profile', profileData);

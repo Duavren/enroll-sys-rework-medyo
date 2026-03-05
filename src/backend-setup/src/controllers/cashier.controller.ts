@@ -594,4 +594,140 @@ export const rejectEnrollmentReview = async (req: AuthRequest, res: Response) =>
   }
 };
 
-export default { listPendingTransactions, listTransactions, processTransaction, cashierReport, listTuitionAssessments, approveTuitionAssessment, listInstallmentPayments, approveInstallmentPayment, rejectInstallmentPayment, listEnrollmentsForReview, updateEnrollmentFees, approveEnrollmentReview, rejectEnrollmentReview };
+// Get fee structure (per-unit tuition rate and fixed fees per course)
+export const getFees = async (req: AuthRequest, res: Response) => {
+  try {
+    const { course } = req.query;
+
+    if (course) {
+      // Get fees for specific course
+      const fees = await query(
+        'SELECT course, tuition_per_unit, registration, library, lab, id_fee, others FROM courses_fees WHERE course = ?',
+        [course]
+      );
+
+      if (fees.length === 0) {
+        return res.status(404).json({ success: false, message: 'Course fees not found' });
+      }
+
+      const fee = fees[0];
+      return res.json({
+        success: true,
+        data: {
+          course: fee.course,
+          tuition_per_unit: fee.tuition_per_unit,
+          registration: fee.registration,
+          library: fee.library,
+          lab: fee.lab,
+          id_fee: fee.id_fee,
+          others: fee.others
+        }
+      });
+    } else {
+      // Get all course fees
+      let allFees = await query(
+        'SELECT course, tuition_per_unit, registration, library, lab, id_fee, others FROM courses_fees ORDER BY course'
+      );
+
+      // Auto-seed if table is empty
+      if (allFees.length === 0) {
+        const defaultCourses = ['BSIT', 'BSCS'];
+        // Also check subjects table for additional courses
+        try {
+          const subjectCourses = await query('SELECT DISTINCT course FROM subjects WHERE course IS NOT NULL AND course != ""');
+          for (const sc of subjectCourses) {
+            if (!defaultCourses.includes(sc.course)) {
+              defaultCourses.push(sc.course);
+            }
+          }
+        } catch (_) {}
+        
+        for (const c of defaultCourses) {
+          await run(
+            `INSERT OR IGNORE INTO courses_fees (course, tuition_per_unit, registration, library, lab, id_fee, others) VALUES (?, 700.00, 1500.00, 500.00, 2000.00, 200.00, 300.00)`,
+            [c]
+          );
+        }
+        
+        allFees = await query(
+          'SELECT course, tuition_per_unit, registration, library, lab, id_fee, others FROM courses_fees ORDER BY course'
+        );
+      }
+
+      const feesData = allFees.map((f: any) => ({
+        course: f.course,
+        tuition_per_unit: f.tuition_per_unit,
+        registration: f.registration,
+        library: f.library,
+        lab: f.lab,
+        id_fee: f.id_fee,
+        others: f.others,
+        total_fixed_fees: f.registration + f.library + f.lab + f.id_fee + f.others
+      }));
+
+      res.json({ success: true, data: feesData });
+    }
+  } catch (error) {
+    console.error('Get fees error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+// Update fee structure (per-unit tuition rate and fixed fees per course)
+export const updateFees = async (req: AuthRequest, res: Response) => {
+  try {
+    const { course, tuition_per_unit, registration, library, lab, id_fee, others } = req.body;
+    const userId = req.user?.id;
+
+    // Validate inputs
+    if (
+      !course || tuition_per_unit === undefined || registration === undefined || library === undefined ||
+      lab === undefined || id_fee === undefined || others === undefined
+    ) {
+      return res.status(400).json({ success: false, message: 'Course and all fee fields are required' });
+    }
+
+    // Validate all are non-negative numbers
+    if (
+      isNaN(tuition_per_unit) || isNaN(registration) || isNaN(library) ||
+      isNaN(lab) || isNaN(id_fee) || isNaN(others) ||
+      tuition_per_unit < 0 || registration < 0 || library < 0 ||
+      lab < 0 || id_fee < 0 || others < 0
+    ) {
+      return res.status(400).json({ success: false, message: 'All fees must be valid non-negative numbers' });
+    }
+
+    // Check if course fees entry exists
+    const existingFee = await query('SELECT id FROM courses_fees WHERE course = ?', [course]);
+
+    if (existingFee.length === 0) {
+      // Insert new course fee
+      await run(
+        `INSERT INTO courses_fees (course, tuition_per_unit, registration, library, lab, id_fee, others, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+        [course, tuition_per_unit, registration, library, lab, id_fee, others]
+      );
+    } else {
+      // Update existing course fee
+      await run(
+        `UPDATE courses_fees SET 
+          tuition_per_unit = ?, registration = ?, library = ?, lab = ?, id_fee = ?, others = ?, updated_at = datetime('now')
+         WHERE course = ?`,
+        [tuition_per_unit, registration, library, lab, id_fee, others, course]
+      );
+    }
+
+    // Log activity
+    await run(
+      'INSERT INTO activity_logs (user_id, action, entity_type, entity_id, description) VALUES (?, ?, ?, ?, ?)',
+      [userId, 'CASHIER_UPDATE_FEES', 'courses_fees', 0, `Cashier updated fees for ${course} - Tuition: ₱${tuition_per_unit}/unit, Registration: ₱${registration}, Library: ₱${library}, Lab: ₱${lab}, ID: ₱${id_fee}, Others: ₱${others}`]
+    );
+
+    res.json({ success: true, message: `Fee structure for ${course} updated successfully` });
+  } catch (error) {
+    console.error('Update fees error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
+
+export default { listPendingTransactions, listTransactions, processTransaction, cashierReport, listTuitionAssessments, approveTuitionAssessment, listInstallmentPayments, approveInstallmentPayment, rejectInstallmentPayment, listEnrollmentsForReview, updateEnrollmentFees, approveEnrollmentReview, rejectEnrollmentReview, getFees, updateFees };

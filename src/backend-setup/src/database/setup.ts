@@ -47,7 +47,16 @@ async function setupDatabase() {
         cor_status TEXT DEFAULT 'Updated',
         grades_complete INTEGER DEFAULT 0,
         clearance_status TEXT DEFAULT 'Clear',
-        status TEXT DEFAULT 'Active' CHECK(status IN ('Active', 'Inactive', 'Graduated')),
+        status TEXT DEFAULT 'Active' CHECK(status IN ('Pending', 'Active', 'Inactive', 'Graduated')),
+        -- Requirement status fields for New students
+        form137_status TEXT DEFAULT 'Pending',
+        form138_status TEXT DEFAULT 'Pending',
+        -- Requirement status fields for Transferee students
+        tor_status TEXT DEFAULT 'Pending',
+        certificate_transfer_status TEXT DEFAULT 'Pending',
+        -- Common requirement status fields
+        birth_certificate_status TEXT DEFAULT 'Pending',
+        moral_certificate_status TEXT DEFAULT 'Pending',
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -512,6 +521,58 @@ async function setupDatabase() {
     db.exec('CREATE INDEX IF NOT EXISTS idx_cor_enrollment ON cors(enrollment_id)');
     db.exec('CREATE INDEX IF NOT EXISTS idx_cor_number ON cors(cor_number)');
 
+    // Create system_settings table to store predefined fees and other settings
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS system_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        setting_key TEXT UNIQUE NOT NULL,
+        setting_value TEXT NOT NULL,
+        description TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+    console.log('✅ System settings table created');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_setting_key ON system_settings(setting_key)');
+
+    // Insert default fee settings if they don't exist
+    const insertSetting = db.prepare('INSERT OR IGNORE INTO system_settings (setting_key, setting_value, description) VALUES (?, ?, ?)');
+    const defaultSettings = [
+      ['tuition_fee', '15000.00', 'Default tuition fee per semester'],
+      ['registration_fee', '2500.00', 'Default registration fee'],
+      ['library_fee', '1000.00', 'Default library fee'],
+      ['lab_fee', '1500.00', 'Default laboratory fee'],
+      ['id_fee', '500.00', 'Default ID fee'],
+      ['others_fee', '1000.00', 'Default miscellaneous/other fees']
+    ];
+    
+    const insertManySettings = db.transaction((settings: any[]) => {
+      for (const setting of settings) {
+        insertSetting.run(setting);
+      }
+    });
+    
+    insertManySettings(defaultSettings);
+    console.log('✅ Default system fees configured');
+
+    // Create courses_fees table to store per-unit tuition rate and fixed fees per course
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS courses_fees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        course TEXT UNIQUE NOT NULL,
+        tuition_per_unit REAL DEFAULT 700.00,
+        registration REAL DEFAULT 1500.00,
+        library REAL DEFAULT 500.00,
+        lab REAL DEFAULT 2000.00,
+        id_fee REAL DEFAULT 200.00,
+        others REAL DEFAULT 300.00,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+    console.log('✅ Courses fees table created');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_course_fees ON courses_fees(course)');
+
     // Create subject_schedules table to store schedule options per subject
     db.exec(`
       CREATE TABLE IF NOT EXISTS subject_schedules (
@@ -648,6 +709,40 @@ async function setupDatabase() {
     
     insertManySubjects(sampleSubjects);
     console.log('✅ Sample subjects created');
+
+    // Insert or update default course fees - hardcoded for reliability
+    try {
+      const defaultCourseFees = ['BSIT', 'BSCS'];
+      
+      // Also grab any additional courses from subjects table
+      const subjectCourses = db.prepare('SELECT DISTINCT course FROM subjects WHERE course IS NOT NULL AND course != ""').all();
+      for (const sc of subjectCourses) {
+        if (!defaultCourseFees.includes((sc as any).course)) {
+          defaultCourseFees.push((sc as any).course);
+        }
+      }
+
+      const upsertCourseFee = db.prepare(`
+        INSERT INTO courses_fees (course, tuition_per_unit, registration, library, lab, id_fee, others)
+        VALUES (?, 700.00, 1500.00, 500.00, 2000.00, 200.00, 300.00)
+        ON CONFLICT(course) DO UPDATE SET
+          tuition_per_unit = CASE WHEN tuition_per_unit = 0 OR tuition_per_unit IS NULL THEN 700.00 ELSE tuition_per_unit END,
+          registration = CASE WHEN registration = 0 OR registration IS NULL THEN 1500.00 ELSE registration END,
+          library = CASE WHEN library = 0 OR library IS NULL THEN 500.00 ELSE library END,
+          lab = CASE WHEN lab = 0 OR lab IS NULL THEN 2000.00 ELSE lab END,
+          id_fee = CASE WHEN id_fee = 0 OR id_fee IS NULL THEN 200.00 ELSE id_fee END,
+          others = CASE WHEN others = 0 OR others IS NULL THEN 300.00 ELSE others END,
+          updated_at = datetime('now')
+      `);
+      
+      for (const courseName of defaultCourseFees) {
+        upsertCourseFee.run(courseName);
+      }
+      
+      console.log(`✅ Initialized fees for ${defaultCourseFees.length} courses: ${defaultCourseFees.join(', ')}`);
+    } catch (e) {
+      console.log('⚠️ Could not initialize course fees:', e);
+    }
 
     // Insert sample students (password: student123)
     const studentPassword = await bcrypt.hash('student123', 10);

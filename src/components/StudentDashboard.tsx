@@ -23,6 +23,7 @@ import { studentService } from '../services/student.service';
 import { subjectService } from '../services/subject.service';
 import paymentsService from '../services/payments.service';
 import { gradesService } from '../services/grades.service';
+import { cashierService } from '../services/cashier.service';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { Input } from './ui/input';
@@ -70,6 +71,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
   const [schedulingSubject, setSchedulingSubject] = useState<any>(null);
   const [studentProfile, setStudentProfile] = useState<any>(null);
   const [enrollmentDetails, setEnrollmentDetails] = useState<any>(null);
+  const [feePerUnit, setFeePerUnit] = useState(700);
   const [assessmentOpen, setAssessmentOpen] = useState(false);
   const [loadingAssessment, setLoadingAssessment] = useState(false);
   const [paymentsOpen, setPaymentsOpen] = useState(false);
@@ -104,6 +106,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
   const [scholarshipLetter, setScholarshipLetter] = useState<File | null>(null);
   const [installmentSchedule, setInstallmentSchedule] = useState<any[]>([]);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
+  const [availableCourses, setAvailableCourses] = useState<string[]>([]);
 
   const SCHOLAR_TYPES = [
     'None',
@@ -114,6 +117,21 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
     'Partnership Scholarships',
     'Promotional Scholarship Grants'
   ];
+
+  // Fetch available courses from subjects
+  useEffect(() => {
+    const fetchCourses = async () => {
+      try {
+        const resp = await subjectService.getAllSubjects();
+        const subjects = resp?.data || resp || [];
+        const courses = [...new Set(subjects.map((s: any) => s.course).filter(Boolean))] as string[];
+        setAvailableCourses(courses.sort());
+      } catch (err) {
+        console.error('Failed to fetch courses from subjects:', err);
+      }
+    };
+    fetchCourses();
+  }, []);
 
   const normalizeStudentType = (raw?: string) => {
     if (!raw) return '';
@@ -314,7 +332,9 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
           address: student.address || '',
           birth_date: student.birth_date || '',
           gender: student.gender || '',
-          username: student.username || ''
+          username: student.username || '',
+          course: student.course || '',
+          year_level: student.year_level || undefined
         });
 
         if (student.student_type) {
@@ -363,6 +383,15 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
         const detailsResp = await enrollmentService.getEnrollmentDetails(current.id);
         const details = detailsResp?.data?.enrollment || detailsResp?.data || {};
         setEnrollmentDetails(details);
+        // Load dynamic fee-per-unit rate for this student's course
+        try {
+          const course = studentProfile?.course || '';
+          if (course) {
+            const feeData = await cashierService.getFees(course);
+            const rates = Array.isArray(feeData) ? feeData.find((f: any) => f.course === course) : feeData;
+            if (rates?.tuition_per_unit) setFeePerUnit(rates.tuition_per_unit);
+          }
+        } catch { /* use default */ }
         const subjects = detailsResp?.data?.subjects || details.enrollment_subjects || [];
         setCurrentCourses(
           subjects.map((es: any) => {
@@ -528,6 +557,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
 
   const handleSubmitSubjects = async () => {
     if (!currentEnrollment) return;
+    if (!window.confirm('Are you sure you want to submit your subjects for assessment?')) return;
     
     try {
       setLoading(true);
@@ -548,6 +578,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
     amount?: number;
   }) => {
     if (!currentEnrollment) return;
+    if (!window.confirm('Are you sure you want to submit this payment?')) return;
     
     try {
       setLoading(true);
@@ -599,6 +630,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
   };
 
   const handleSubmitForAssessment = async () => {
+    if (!window.confirm('Are you sure you want to submit your enrollment for assessment?')) return;
     try {
       if (scholarshipType !== 'None' && !scholarshipLetter) {
         alert('Please upload your scholarship letter before proceeding.');
@@ -872,6 +904,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
         alert('Please enter reference number');
         return;
       }
+      if (!window.confirm('Are you sure you want to submit this payment?')) return;
 
       try {
         setUploading(true);
@@ -1345,8 +1378,55 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
     );
   };
 
-  const renderEnrollmentContent = () => (
-    <div>
+  const renderEnrollmentContent = () => {
+    // Check if profile is complete for newly registered students
+    const requiredProfileFields = [
+      studentProfile?.first_name,
+      studentProfile?.last_name,
+      studentProfile?.contact_number,
+      studentProfile?.address,
+      studentProfile?.birth_date,
+      studentProfile?.gender,
+      studentProfile?.course,
+      studentProfile?.year_level
+    ];
+    
+    const isProfileIncomplete = requiredProfileFields.some(field => !field || field === '');
+    
+    // If no enrollment has been created yet and profile is incomplete, show profile completion message
+    if (isProfileIncomplete && !currentEnrollment) {
+      return (
+        <Card className="border-0 shadow-lg p-8 text-center">
+          <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="h-8 w-8 text-blue-600" />
+          </div>
+          <h3 className="text-xl font-semibold mb-2">Complete Your Profile First</h3>
+          <p className="text-slate-600 mb-6">Before you can enroll, please complete your profile with all required information.</p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-900">
+            <p className="font-medium mb-2">Required fields to complete:</p>
+            <ul className="text-left space-y-1">
+              {!studentProfile?.first_name && <li>• First Name</li>}
+              {!studentProfile?.last_name && <li>• Last Name</li>}
+              {!studentProfile?.contact_number && <li>• Contact Number</li>}
+              {!studentProfile?.address && <li>• Address</li>}
+              {!studentProfile?.birth_date && <li>• Birth Date</li>}
+              {!studentProfile?.gender && <li>• Gender</li>}
+              {!studentProfile?.course && <li>• Course</li>}
+              {!studentProfile?.year_level && <li>• Year Level</li>}
+            </ul>
+          </div>
+          <Button 
+            onClick={() => setActiveSection('My Profile')}
+            className="bg-gradient-to-r from-blue-600 to-indigo-600"
+          >
+            Complete Profile
+          </Button>
+        </Card>
+      );
+    }
+
+    return (
+      <div>
       {['Pending Assessment', 'For Admin Approval', 'For Registrar Assessment', 'Cashier Review', 'For Dean Approval', 'Payment Verification'].includes(enrollmentStatus) && (
         <Card className="border-0 shadow-lg p-8 text-center">
           <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center mx-auto mb-4">
@@ -1788,8 +1868,9 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
           )}
         </Card>
       )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   const renderSubjectsContent = () => {
     if (loading) {
@@ -2207,6 +2288,46 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
               </Button>
             </div>
 
+            {/* Academic Information */}
+            <div className="border-t pt-6">
+              <h4 className="text-md font-medium mb-4">Academic Information</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="profile-course">Course</Label>
+                  <Select
+                    value={profileForm.course || ''}
+                    onValueChange={(value) => setProfileForm({ ...profileForm, course: value })}
+                  >
+                    <SelectTrigger id="profile-course" className="mt-2">
+                      <SelectValue placeholder="Select course" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableCourses.map((course) => (
+                        <SelectItem key={course} value={course}>{course}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="profile-year-level">Year Level</Label>
+                  <Select
+                    value={(profileForm.year_level || '').toString()}
+                    onValueChange={(value) => setProfileForm({ ...profileForm, year_level: value ? parseInt(value) : undefined })}
+                  >
+                    <SelectTrigger id="profile-year-level" className="mt-2">
+                      <SelectValue placeholder="Select year level" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1st Year</SelectItem>
+                      <SelectItem value="2">2nd Year</SelectItem>
+                      <SelectItem value="3">3rd Year</SelectItem>
+                      <SelectItem value="4">4th Year</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
             {/* Student Information (Read-only) */}
             <div className="border-t pt-6">
               <h4 className="text-md font-medium mb-4">Student Information</h4>
@@ -2214,14 +2335,6 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
                 <div>
                   <p className="text-slate-500">Student ID</p>
                   <p className="font-medium">{studentProfile.student_id || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Course</p>
-                  <p className="font-medium">{studentProfile.course || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-slate-500">Year Level</p>
-                  <p className="font-medium">{studentProfile.year_level ? `${studentProfile.year_level}${studentProfile.year_level === 1 ? 'st' : studentProfile.year_level === 2 ? 'nd' : studentProfile.year_level === 3 ? 'rd' : 'th'} Year` : 'N/A'}</p>
                 </div>
                 <div>
                   <p className="text-slate-500">Student Type</p>
@@ -2243,7 +2356,9 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
                     address: studentProfile.address || '',
                     birth_date: studentProfile.birth_date || '',
                     gender: studentProfile.gender || '',
-                    username: studentProfile.username || ''
+                    username: studentProfile.username || '',
+                    course: studentProfile.course || '',
+                    year_level: studentProfile.year_level || undefined
                   });
                 }}
               >
@@ -2674,8 +2789,8 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
                     <h4 className="text-sm font-medium">Subject Fees</h4>
                     <div className="text-sm mt-2">
                       <div className="flex justify-between"><div>Total Units</div><div>{enrollmentDetails?.total_units || 0}</div></div>
-                      <div className="flex justify-between"><div>Rate per Unit</div><div>₱700.00</div></div>
-                      <div className="flex justify-between font-medium mt-2"><div>Subject Fees</div><div>₱{((enrollmentDetails?.total_units || 0) * 700).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div></div>
+                      <div className="flex justify-between"><div>Rate per Unit</div><div>₱{feePerUnit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div></div>
+                      <div className="flex justify-between font-medium mt-2"><div>Subject Fees</div><div>₱{((enrollmentDetails?.total_units || 0) * feePerUnit).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div></div>
 
                       <div className="mt-3">
                         <h5 className="text-sm font-medium">Subjects</h5>
@@ -2683,7 +2798,7 @@ export default function StudentDashboard({ onLogout }: StudentDashboardProps) {
                           {currentCourses.map((s: any, idx: number) => (
                             <div key={idx} className="flex justify-between text-sm">
                               <div>{s.code} — {s.name}</div>
-                              <div>{s.units} unit{s.units !== 1 ? 's' : ''} • ₱{(s.units * 700).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                              <div>{s.units} unit{s.units !== 1 ? 's' : ''} • ₱{(s.units * feePerUnit).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
                             </div>
                           ))}
                         </div>

@@ -43,6 +43,7 @@ import { gradesService } from '../services/grades.service';
 import { maintenanceService } from '../services/maintenance.service';
 import { subjectService } from '../services/subject.service';
 import { enrollmentService } from '../services/enrollment.service';
+import { cashierService } from '../services/cashier.service';
 
 interface RegistrarDashboardProps {
   onLogout: () => void;
@@ -75,6 +76,7 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
     remarks: '',
     scholarship_coverage: ''
   });
+  const [courseFeeRates, setCourseFeeRates] = useState({ tuition_per_unit: 700, registration: 1500, library: 500, lab: 2000, id_fee: 200, others: 300 });
 
   const SCHOLARSHIP_DEFINITIONS: any = {
     'Merit Scholarship': {
@@ -146,6 +148,10 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
   useEffect(() => {
     fetchData();
   }, [activeSection]);
+
+  useEffect(() => {
+    console.log('editStudentForm changed:', editStudentForm);
+  }, [editStudentForm]);
 
   const fetchData = async () => {
     try {
@@ -226,13 +232,27 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
     const initialCoverage = enrollment.scholarship_type && enrollment.scholarship_type !== 'None'
       ? SCHOLARSHIP_DEFINITIONS[enrollment.scholarship_type]?.coverage?.[0]
       : '';
+    
+    // Fetch dynamic fee rates for this enrollment's course
+    let rates = { tuition_per_unit: 700, registration: 1500, library: 500, lab: 2000, id_fee: 200, others: 300 };
+    try {
+      const feeData = await cashierService.getFees(enrollment.course);
+      if (feeData && !Array.isArray(feeData)) {
+        rates = { ...rates, ...feeData };
+      } else if (Array.isArray(feeData)) {
+        const match = feeData.find((f: any) => f.course === enrollment.course);
+        if (match) rates = { ...rates, ...match };
+      }
+    } catch (e) { console.warn('Could not fetch course fees, using defaults'); }
+    setCourseFeeRates(rates);
+    
     setAssessmentForm({
-      tuition: 14000,
-      registration: 1500,
-      library: 500,
-      lab: 2000,
-      id_fee: 200,
-      others: 300,
+      tuition: 0,
+      registration: rates.registration,
+      library: rates.library,
+      lab: rates.lab,
+      id_fee: rates.id_fee,
+      others: rates.others,
       remarks: '',
       scholarship_coverage: initialCoverage
     });
@@ -257,7 +277,7 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
       if (refreshed.success) {
         setSubjectAssessmentDetails(refreshed.data);
         const totalUnits = refreshed.data.subjects?.reduce((sum: number, s: any) => sum + (s.units || 0), 0) || 0;
-        setAssessmentForm(prev => ({ ...prev, tuition: totalUnits * 700 }));
+        setAssessmentForm(prev => ({ ...prev, tuition: totalUnits * rates.tuition_per_unit }));
       } else {
         setSubjectAssessmentDetails(detailsResp.success ? detailsResp.data : null);
       }
@@ -277,7 +297,7 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
       if (resp.success) {
         setSubjectAssessmentDetails(resp.data);
         const totalUnits = resp.data.subjects?.reduce((sum: number, s: any) => sum + (s.units || 0), 0) || 0;
-        setAssessmentForm(prev => ({ ...prev, tuition: totalUnits * 700 }));
+        setAssessmentForm(prev => ({ ...prev, tuition: totalUnits * courseFeeRates.tuition_per_unit }));
       }
     } catch (err: any) {
       alert(err.message || 'Failed to add subject');
@@ -295,7 +315,7 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
       if (resp.success) {
         setSubjectAssessmentDetails(resp.data);
         const totalUnits = resp.data.subjects?.reduce((sum: number, s: any) => sum + (s.units || 0), 0) || 0;
-        setAssessmentForm(prev => ({ ...prev, tuition: totalUnits * 700 }));
+        setAssessmentForm(prev => ({ ...prev, tuition: totalUnits * courseFeeRates.tuition_per_unit }));
       }
     } catch (err: any) {
       alert(err.message || 'Failed to remove subject');
@@ -364,6 +384,7 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
   };
 
   const handleApproveCOR = async (corId: number) => {
+    if (!window.confirm('Are you sure you want to approve this COR?')) return;
     try {
       setError('');
       await registrarService.approveCOR(corId);
@@ -458,17 +479,26 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
 
   const openRecord = (student: any) => {
     setSelectedRecord(student);
-    setEditStudentForm({
-      first_name: student.first_name,
-      middle_name: student.middle_name,
-      last_name: student.last_name,
-      course: student.course,
-      year_level: student.year_level,
-      status: student.status,
-      clearance_status: student.clearance_status,
-      contact_number: student.contact_number,
-      address: student.address
-    });
+    // Initialize requirement statuses based on student type
+    const requirementStatuses: any = {};
+    const studentType = student.student_type || 'New';
+    
+    if (studentType === 'New' || studentType === 'new') {
+      requirementStatuses.form137 = student.form137_status || 'Pending';
+      requirementStatuses.form138 = student.form138_status || 'Pending';
+      requirementStatuses.birth_certificate = student.birth_certificate_status || 'Pending';
+      requirementStatuses.moral_certificate = student.moral_certificate_status || 'Pending';
+    } else if (studentType === 'Transferee' || studentType === 'transferee') {
+      requirementStatuses.tor = student.tor_status || 'Pending';
+      requirementStatuses.certificate_transfer = student.certificate_transfer_status || 'Pending';
+      requirementStatuses.birth_certificate = student.birth_certificate_status || 'Pending';
+      requirementStatuses.moral_certificate = student.moral_certificate_status || 'Pending';
+    } else if (studentType === 'Returning' || studentType === 'returning') {
+      requirementStatuses.form137 = student.form137_status || 'Pending';
+    }
+    
+    console.log('Opening student record:', student.student_id, 'Initial form:', requirementStatuses);
+    setEditStudentForm(requirementStatuses);
     setViewStudentOpen(true);
   };
 
@@ -476,12 +506,46 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
     if (!selectedRecord) return;
     try {
       setLoading(true);
-      await adminService.updateStudent(selectedRecord.id, editStudentForm);
+      console.log('Updating student:', selectedRecord.id, selectedRecord.student_id, 'Form data:', editStudentForm);
+      
+      // Map requirement field names to their database column names
+      const updateData: any = {};
+      const studentType = selectedRecord.student_type || 'New';
+      
+      if (studentType === 'New' || studentType === 'new') {
+        updateData.form137_status = editStudentForm.form137 || 'Pending';
+        updateData.form138_status = editStudentForm.form138 || 'Pending';
+        updateData.birth_certificate_status = editStudentForm.birth_certificate || 'Pending';
+        updateData.moral_certificate_status = editStudentForm.moral_certificate || 'Pending';
+      } else if (studentType === 'Transferee' || studentType === 'transferee') {
+        updateData.tor_status = editStudentForm.tor || 'Pending';
+        updateData.certificate_transfer_status = editStudentForm.certificate_transfer || 'Pending';
+        updateData.birth_certificate_status = editStudentForm.birth_certificate || 'Pending';
+        updateData.moral_certificate_status = editStudentForm.moral_certificate || 'Pending';
+      } else if (studentType === 'Returning' || studentType === 'returning') {
+        updateData.form137_status = editStudentForm.form137 || 'Pending';
+      }
+      
+      console.log('Update data to send:', updateData);
+      const result = await adminService.updateStudent(selectedRecord.id, updateData);
+      console.log('Update result:', result);
+      console.log('Update result status:', result?.status || result?.success || result);
+      
+      if (!result || result.status === 'error' || result.success === false) {
+        throw new Error(result?.message || 'Update failed on server');
+      }
+      
+      alert('Requirement statuses updated successfully');
       setViewStudentOpen(false);
+      
+      // Refresh the data
+      console.log('Fetching fresh data...');
       await fetchData();
-      alert('Student record updated');
+      console.log('Data fetched');
     } catch (err: any) {
-      setError(err.message || 'Failed to update student');
+      console.error('Update error:', err);
+      setError(err.message || 'Failed to update requirements');
+      alert('Error: ' + (err.message || 'Failed to update requirements'));
     } finally {
       setLoading(false);
     }
@@ -1401,65 +1465,215 @@ export default function RegistrarDashboard({ onLogout }: RegistrarDashboardProps
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Student Record</DialogTitle>
-            <DialogDescription>View and update basic details.</DialogDescription>
+            <DialogDescription>View student details and update requirement statuses.</DialogDescription>
           </DialogHeader>
           {selectedRecord && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>First Name</Label>
-                  <Input value={editStudentForm.first_name || ''} onChange={(e) => setEditStudentForm((p: any) => ({ ...p, first_name: e.target.value }))} />
-                </div>
-                <div>
-                  <Label>Last Name</Label>
-                  <Input value={editStudentForm.last_name || ''} onChange={(e) => setEditStudentForm((p: any) => ({ ...p, last_name: e.target.value }))} />
-                </div>
-                <div>
-                  <Label>Course</Label>
-                  <Input value={editStudentForm.course || ''} onChange={(e) => setEditStudentForm((p: any) => ({ ...p, course: e.target.value }))} />
-                </div>
-                <div>
-                  <Label>Year Level</Label>
-                  <Input type="number" value={editStudentForm.year_level || ''} onChange={(e) => setEditStudentForm((p: any) => ({ ...p, year_level: Number(e.target.value) }))} />
-                </div>
-                <div>
-                  <Label>Status</Label>
-                  <Select
-                    value={editStudentForm.status || 'Active'}
-                    onValueChange={(v) => setEditStudentForm((p: any) => ({ ...p, status: v }))}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Active">Active</SelectItem>
-                      <SelectItem value="Inactive">Inactive</SelectItem>
-                      <SelectItem value="Graduated">Graduated</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Clearance Status</Label>
-                  <Select
-                    value={editStudentForm.clearance_status || 'Clear'}
-                    onValueChange={(v) => setEditStudentForm((p: any) => ({ ...p, clearance_status: v }))}
-                  >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Clear">Clear</SelectItem>
-                      <SelectItem value="Pending">Pending</SelectItem>
-                      <SelectItem value="Blocked">Blocked</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+            <div className="space-y-6">
+              {/* Personal Details - Read Only */}
               <div>
-                <Label>Contact Number</Label>
-                <Input value={editStudentForm.contact_number || ''} onChange={(e) => setEditStudentForm((p: any) => ({ ...p, contact_number: e.target.value }))} />
+                <h3 className="text-sm font-semibold text-slate-900 mb-4">Personal Details</h3>
+                <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-lg">
+                  <div>
+                    <Label className="text-slate-600 text-xs">First Name</Label>
+                    <p className="text-sm font-medium mt-1">{selectedRecord.first_name}</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-600 text-xs">Last Name</Label>
+                    <p className="text-sm font-medium mt-1">{selectedRecord.last_name}</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-600 text-xs">Student ID</Label>
+                    <p className="text-sm font-medium mt-1">{selectedRecord.student_id}</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-600 text-xs">Student Type</Label>
+                    <p className="text-sm font-medium mt-1">{selectedRecord.student_type}</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-600 text-xs">Course</Label>
+                    <p className="text-sm font-medium mt-1">{selectedRecord.course}</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-600 text-xs">Year Level</Label>
+                    <p className="text-sm font-medium mt-1">Year {selectedRecord.year_level}</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-600 text-xs">Status</Label>
+                    <p className="text-sm font-medium mt-1">{selectedRecord.status || 'Active'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-slate-600 text-xs">Clearance Status</Label>
+                    <p className="text-sm font-medium mt-1">{selectedRecord.clearance_status || 'Clear'}</p>
+                  </div>
+                </div>
               </div>
+
+              {/* Requirement Statuses - Editable */}
               <div>
-                <Label>Address</Label>
-                <Input value={editStudentForm.address || ''} onChange={(e) => setEditStudentForm((p: any) => ({ ...p, address: e.target.value }))} />
+                <h3 className="text-sm font-semibold text-slate-900 mb-4">Requirement Statuses</h3>
+                <div className="space-y-3">
+                  {selectedRecord.student_type === 'New' || selectedRecord.student_type === 'new' ? (
+                    <>
+                      <div>
+                        <Label>Form 137 (Report Card)</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.form137 || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Form 137 changed from', editStudentForm.form137, 'to:', e.target.value);
+                            setEditStudentForm((p: any) => {
+                              const updated = { ...p, form137: e.target.value };
+                              console.log('Updated form state:', updated);
+                              return updated;
+                            });
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label>Form 138 (Transcript of Records)</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.form138 || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Form 138 changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, form138: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label>Birth Certificate</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.birth_certificate || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Birth Certificate changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, birth_certificate: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label>Good Moral Certificate</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.moral_certificate || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Moral Certificate changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, moral_certificate: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : selectedRecord.student_type === 'Transferee' || selectedRecord.student_type === 'transferee' ? (
+                    <>
+                      <div>
+                        <Label>Transcript of Records (TOR)</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.tor || 'Pending'}
+                          onChange={(e) => {
+                            console.log('TOR changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, tor: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label>Certificate of Transfer</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.certificate_transfer || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Certificate of Transfer changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, certificate_transfer: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label>Birth Certificate</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.birth_certificate || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Birth Certificate changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, birth_certificate: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                      <div>
+                        <Label>Good Moral Certificate</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.moral_certificate || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Moral Certificate changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, moral_certificate: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : selectedRecord.student_type === 'Returning' || selectedRecord.student_type === 'returning' ? (
+                    <>
+                      <div>
+                        <Label>Form 137 (Report Card)</Label>
+                        <select
+                          className="mt-1 w-full px-3 py-2 border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                          value={editStudentForm.form137 || 'Pending'}
+                          onChange={(e) => {
+                            console.log('Form 137 changed to:', e.target.value);
+                            setEditStudentForm((p: any) => ({ ...p, form137: e.target.value }));
+                          }}
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Submitted">Submitted</option>
+                          <option value="Verified">Verified</option>
+                          <option value="Incomplete">Incomplete</option>
+                        </select>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+
+              <div className="flex justify-end gap-2 pt-2 border-t">
                 <Button variant="outline" onClick={() => setViewStudentOpen(false)}>Close</Button>
                 <Button onClick={handleUpdateStudentRecord}>Save Changes</Button>
               </div>

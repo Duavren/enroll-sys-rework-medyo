@@ -151,7 +151,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 <form onSubmit={handleSubmit} className="space-y-6">
                   {/* Username */}
                   <div className="space-y-2">
-                    <Label htmlFor="username" className="text-slate-700">Username</Label>
+                    <Label htmlFor="username" className="text-slate-700">Student No.</Label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
                       <Input
@@ -160,7 +160,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         className="pl-10 h-12 border-slate-200 focus:border-blue-500 rounded-xl"
-                        placeholder="Enter your username"
+                        placeholder="Enter your student number"
                         required
                       />
                     </div>
@@ -287,19 +287,15 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           }} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Student Number</Label>
+                <Label>Student No.</Label>
                 <Input value={regForm.student_id} readOnly className="mt-2 bg-slate-100" />
               </div>
-              <div>
-                <Label>Username</Label>
-                <Input value={regForm.username} onChange={(e) => setRegForm({ ...regForm, username: e.target.value })} className="mt-2" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Password</Label>
                 <Input type="password" value={regForm.password} onChange={(e) => setRegForm({ ...regForm, password: e.target.value })} className="mt-2" />
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Confirm Password</Label>
                 <Input type="password" value={regForm.confirmPassword} onChange={(e) => setRegForm({ ...regForm, confirmPassword: e.target.value })} className="mt-2" />

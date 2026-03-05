@@ -155,6 +155,34 @@ class CashierService {
       throw new Error(handleApiError(error));
     }
   }
+
+  // Fee Management - Per-course tuition per unit and fixed fees
+  async getFees(course?: string) {
+    try {
+      const params = course ? { course } : {};
+      const res = await api.get('/cashier/fees', { params });
+      return res.data?.data || res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  async updateFees(fees: {
+    course: string;
+    tuition_per_unit: number;
+    registration: number;
+    library: number;
+    lab: number;
+    id_fee: number;
+    others: number;
+  }) {
+    try {
+      const res = await api.put('/cashier/fees', fees);
+      return res.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
 }
 
 export const cashierService = new CashierService();

@@ -157,6 +157,7 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
 
   const handleDeanApprove = async () => {
     if (!selectedDeanEnrollment) return;
+    if (!window.confirm('Are you sure you want to approve this enrollment?')) return;
     try {
       setDeanActionLoading(true);
       await deanService.approveSubjectSelection(selectedDeanEnrollment.id, deanFeeForm);
@@ -423,6 +424,7 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
   };
 
   const handleApproveSubjects = async (enrollmentId: number) => {
+    if (!window.confirm('Are you sure you want to approve these subjects?')) return;
     try {
       setApprovingId(enrollmentId);
       await deanService.approveSubjectSelection(enrollmentId);
@@ -461,6 +463,7 @@ export default function DeanDashboard({ onLogout }: DeanDashboardProps) {
   };
 
   const handleApproveGrade = async (enrollmentSubjectId: number) => {
+    if (!window.confirm('Are you sure you want to approve this grade?')) return;
     try {
       setLoading(true);
       await gradesService.approveGrade(enrollmentSubjectId);

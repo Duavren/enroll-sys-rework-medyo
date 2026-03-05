@@ -248,6 +248,41 @@ class AdminService {
       throw new Error(handleApiError(error));
     }
   }
-}
+
+  /**
+   * Get pending account requests
+   */
+  async getPendingAccountRequests(): Promise<any> {
+    try {
+      const response = await api.get('/admin/account-requests');
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  /**
+   * Approve account request
+   */
+  async approveAccountRequest(id: number): Promise<any> {
+    try {
+      const response = await api.put(`/admin/account-requests/${id}/approve`);
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }
+
+  /**
+   * Reject account request
+   */
+  async rejectAccountRequest(id: number, reason?: string): Promise<any> {
+    try {
+      const response = await api.put(`/admin/account-requests/${id}/reject`, { reason });
+      return response.data;
+    } catch (error) {
+      throw new Error(handleApiError(error));
+    }
+  }}
 
 export const adminService = new AdminService();

@@ -20,6 +20,8 @@ router.put('/enrollment-reviews/:id/update-fees', authenticate, authorize('cashi
 router.put('/enrollment-reviews/:id/approve', authenticate, authorize('cashier', 'registrar', 'superadmin'), cashier.approveEnrollmentReview);
 router.put('/enrollment-reviews/:id/reject', authenticate, authorize('cashier', 'registrar', 'superadmin'), cashier.rejectEnrollmentReview);
 
-export default router;
+// Fee Management - Predefined fees
+router.get('/fees', authenticate, authorize('cashier', 'superadmin', 'registrar', 'admin', 'student', 'dean'), cashier.getFees);
+router.put('/fees', authenticate, authorize('cashier', 'superadmin'), cashier.updateFees);
 
 export default router;

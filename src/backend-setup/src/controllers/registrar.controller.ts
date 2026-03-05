@@ -1,8 +1,23 @@
 import { Response } from 'express';
 import path from 'path';
 import fs from 'fs';
-import db, { query, run } from '../database/connection';
+import db, { query, run, get } from '../database/connection';
 import { AuthRequest } from '../middleware/auth.middleware';
+
+// Helper: get fee rates for a course from courses_fees table, with safe defaults
+const getCourseFeeRates = async (course: string) => {
+  const defaults = { tuition_per_unit: 700, registration: 1500, library: 500, lab: 2000, id_fee: 200, others: 300 };
+  if (!course) return defaults;
+  try {
+    const row = await get(
+      'SELECT tuition_per_unit, registration, library, lab, id_fee, others FROM courses_fees WHERE course = ?',
+      [course]
+    );
+    return row ? { ...defaults, ...row } : defaults;
+  } catch {
+    return defaults;
+  }
+};
 
 // COR Management
 export const getAllCORs = async (req: AuthRequest, res: Response) => {
@@ -381,8 +396,15 @@ export const approveSubjectAssessment = async (req: AuthRequest, res: Response) 
     );
     const totalUnits = subjTotals[0]?.total_units || 0;
     
-    // Calculate total amount
-    const tuitionFee = tuition || (totalUnits * 700); // Default 700 per unit
+    // Get course fee rates from courses_fees table
+    const studentInfo = await get(
+      'SELECT s.course FROM enrollments e JOIN students s ON e.student_id = s.id WHERE e.id = ?',
+      [id]
+    );
+    const feeRates = await getCourseFeeRates(studentInfo?.course || '');
+    
+    // Calculate total amount using dynamic per-unit rate
+    const tuitionFee = tuition || (totalUnits * feeRates.tuition_per_unit);
     const regFee = registration || 0;
     const libFee = library || 0;
     const labFee = lab || 0;
