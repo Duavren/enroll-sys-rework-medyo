@@ -66,7 +66,7 @@ export const updateGrade = async (req: AuthRequest, res: Response) => {
 
     await run(
       `UPDATE enrollment_subjects SET 
-        grade = ?, updated_at = datetime('now')
+        grade = ?, updated_at = datetime('now', 'utc') || 'Z'
       WHERE id = ?`,
       [grade, id]
     );
